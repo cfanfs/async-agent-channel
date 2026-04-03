@@ -59,8 +59,12 @@ export function registerContactsCommand(program: Command): void {
         process.exit(1);
       }
 
-      // Validate server ref format and check member exists
+      // Validate server ref format — require name@group
       if (opts.server) {
+        if (!opts.server.includes("@")) {
+          console.error(`Server ref must use name@group format (e.g. alice@work). Got: "${opts.server}"`);
+          process.exit(1);
+        }
         const { memberName, group } = parseServerRef(opts.server);
         const serversMap = getServersMap(cfg);
         const serverConfig = serversMap[group];

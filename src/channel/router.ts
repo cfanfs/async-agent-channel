@@ -2,7 +2,7 @@ import type { Channel } from "./types.js";
 import { EmailChannel } from "./email/index.js";
 import { ServerChannel } from "./server/index.js";
 import type { AacConfig, ContactInfo } from "../config.js";
-import { resolveContact, getContactChannel, parseServerRef, getServersMap, getServerConfig } from "../config.js";
+import { resolveContact, getContactChannel, parseServerRef, getServersMap, getServerConfig, migrateKeychainIfNeeded } from "../config.js";
 import { getCredential } from "../keychain/index.js";
 
 export type ChannelType = "email" | "server";
@@ -51,6 +51,8 @@ async function resolveServerChannel(
   const { memberName, group } = parseServerRef(contact.server);
   const serverConfig = getServerConfig(cfg, group);
 
+  // Ensure legacy keychain entries are migrated before lookup
+  await migrateKeychainIfNeeded(serverConfig.name);
   const userId = await getCredential(`server-${group}`, serverConfig.name);
   if (!userId) {
     throw new Error(

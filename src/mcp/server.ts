@@ -348,8 +348,11 @@ function handleContactsAdd(a: Record<string, unknown>) {
     return text("Provide at least email or server member name (format: name@group).");
   }
 
-  // Validate server ref format
+  // Validate server ref format — require name@group
   if (serverRef) {
+    if (!serverRef.includes("@")) {
+      return text(`Server ref must use name@group format (e.g. alice@work). Got: "${serverRef}"`);
+    }
     const { group } = parseServerRef(serverRef);
     const serversMap = getServersMap(cfg);
     if (!serversMap[group]) {

@@ -9,6 +9,8 @@ vi.mock("../keychain/index.js", () => ({
     if (key === "server-work" && account === "me") return "test-user-id-work";
     return null;
   }),
+  setCredential: vi.fn(async () => {}),
+  deleteCredential: vi.fn(async () => {}),
 }));
 
 function makeConfig(overrides?: Partial<AacConfig>): AacConfig {

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { ServerStore, type ServerStoreConfig } from "./store.js";
 import { authenticateRequest } from "./auth.js";
 import { ObjectStore, loadS3ConfigFromEnv } from "./s3.js";
+import { parsePositiveIntEnv } from "./limits.js";
 import {
   handleHealth,
   handleInvite,
@@ -56,7 +57,7 @@ export class RelayServer {
     });
 
     const host = this.config.host ?? "0.0.0.0";
-    return new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       this.server!.listen(this.config.port, host, () => {
         console.log(`aac relay server listening on ${host}:${this.config.port}`);
         resolve();
@@ -159,9 +160,9 @@ export class RelayServer {
 }
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024; // 1 MB — for non-upload routes
-const MAX_BODY_BYTES = parseInt(
-  process.env.AAC_MAX_BODY_BYTES ?? String(50 * 1024 * 1024),
-  10
+const MAX_BODY_BYTES = parsePositiveIntEnv(
+  process.env.AAC_MAX_BODY_BYTES,
+  50 * 1024 * 1024
 ); // default 50 MB — for message uploads only
 
 class BodyTooLargeError extends Error {

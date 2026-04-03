@@ -3,14 +3,12 @@ import type { ServerResponse } from "node:http";
 import type { ServerStore, MemberRow } from "./store.js";
 import type { ObjectStore } from "./s3.js";
 import { isS3Reference, makeS3Reference, extractS3Key } from "./s3.js";
+import { parsePositiveIntEnv, utf8ByteLength } from "./limits.js";
 import { generateUserId } from "./token.js";
 import { deriveKeyId } from "../channel/server/sign.js";
 
 const MAX_INLINE_BODY_BYTES = 1024 * 1024; // 1 MB
-const S3_OFFLOAD_THRESHOLD = parseInt(
-  process.env.AAC_S3_THRESHOLD ?? String(64 * 1024),
-  10
-);
+const S3_OFFLOAD_THRESHOLD = parsePositiveIntEnv(process.env.AAC_S3_THRESHOLD, 64 * 1024);
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -117,14 +115,15 @@ export async function handleSendMessage(
   }
 
   const id = randomUUID();
+  const bodyBytes = utf8ByteLength(parsed.body);
 
   // Offload large bodies to S3
   let storeBody = parsed.body;
-  if (objectStore && parsed.body.length > S3_OFFLOAD_THRESHOLD) {
+  if (objectStore && bodyBytes > S3_OFFLOAD_THRESHOLD) {
     const key = `messages/${id}`;
     await objectStore.put(key, parsed.body);
     storeBody = makeS3Reference(key);
-  } else if (!objectStore && parsed.body.length > MAX_INLINE_BODY_BYTES) {
+  } else if (!objectStore && bodyBytes > MAX_INLINE_BODY_BYTES) {
     json(res, 413, { error: "Message body too large. Configure S3 storage for large messages." });
     return;
   }

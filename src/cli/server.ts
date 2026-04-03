@@ -87,6 +87,14 @@ export function registerServerCommand(program: Command): void {
         process.exit(1);
       }
 
+      // Refuse to overwrite an existing group alias
+      const existingServers = getServersMap(cfg);
+      if (existingServers[opts.group]) {
+        console.error(`Group "${opts.group}" already exists (${existingServers[opts.group].url}).`);
+        console.error(`Use a different --group alias, or remove the existing one first.`);
+        process.exit(1);
+      }
+
       // Preflight: verify keychain is accessible
       try {
         await getCredential("server", "__preflight__");

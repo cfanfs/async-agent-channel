@@ -97,24 +97,49 @@ export function resolveGroup(cfg: AacConfig, explicit?: string): string {
   throw new Error(`Multiple server groups configured. Specify --group: ${groups.join(", ")}`);
 }
 
-/** Migrate legacy config: single server → servers map, bare contact names → name@default. */
-function migrateConfig(cfg: AacConfig): boolean {
-  let migrated = false;
+/** Migrate legacy config: single server → servers map, bare contact names → name@default.
+ *  Returns the legacy server name if YAML was migrated (for keychain migration), null otherwise. */
+function migrateConfig(cfg: AacConfig): string | null {
+  let legacyName: string | null = null;
 
   if (cfg.server && !cfg.servers) {
+    legacyName = cfg.server.name;
     cfg.servers = { default: cfg.server };
     delete cfg.server;
-    migrated = true;
   }
 
   for (const [, entry] of Object.entries(cfg.contacts)) {
     if (typeof entry === "object" && entry.server && !entry.server.includes("@")) {
       entry.server = `${entry.server}@default`;
-      migrated = true;
+      if (!legacyName) legacyName = ""; // mark as migrated
     }
   }
 
-  return migrated;
+  return legacyName;
+}
+
+/**
+ * Migrate legacy keychain entry (aac-server → aac-server-default).
+ * Call this before any credential lookup that uses server-${group}.
+ * Safe to call multiple times — no-ops if already migrated or no legacy entry.
+ */
+let keychainMigrated = false;
+export async function migrateKeychainIfNeeded(legacyName: string): Promise<void> {
+  if (keychainMigrated) return;
+  keychainMigrated = true;
+
+  // Lazy import to avoid circular dependency (keychain is async)
+  const { getCredential, setCredential, deleteCredential } = await import("./keychain/index.js");
+
+  const legacy = await getCredential("server", legacyName);
+  if (!legacy) return;
+
+  // Copy to new key, delete old
+  const existing = await getCredential("server-default", legacyName);
+  if (!existing) {
+    await setCredential("server-default", legacyName, legacy);
+  }
+  await deleteCredential("server", legacyName).catch(() => {});
 }
 
 const CONFIG_DIR = join(homedir(), ".config", "aac");
@@ -140,8 +165,14 @@ export function loadConfig(): AacConfig {
   }
   const raw = readFileSync(CONFIG_PATH, "utf-8");
   const cfg = parse(raw) as AacConfig;
-  if (migrateConfig(cfg)) {
+  const legacyName = migrateConfig(cfg);
+  if (legacyName !== null) {
     saveConfig(cfg);
+    // Schedule async keychain migration — callers that need credentials
+    // should await migrateKeychainIfNeeded() before getCredential().
+    if (legacyName) {
+      migrateKeychainIfNeeded(legacyName).catch(() => {});
+    }
   }
   return cfg;
 }
