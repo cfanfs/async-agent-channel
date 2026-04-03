@@ -36,13 +36,17 @@ docker compose exec relay node dist/cli/index.js server init \
 # 交互式配置（邮箱密码存入系统 keychain）
 aac config init
 
-# 加入中继服务器（粘贴 init 步骤生成的 user_id）
+# 加入中继服务器（粘贴 init 步骤生成的 user_id，或别人邀请你的 user_id）
 aac server join $AAC_HOST --name <你的名字>
 
 # 邀请新成员
 aac server invite
 # 把 user_id 发给对方，对方执行：
 #   aac server join $AAC_HOST --name <对方名字>
+
+# 如果之前已经加入过，但本地凭据丢了，
+# 可以把 server user_id 重新写回 keychain
+aac config set-credential server --group default
 
 # 添加联系人（server 通道、email、或两者兼有）
 aac contacts add alice --server alice
@@ -54,6 +58,8 @@ aac config show
 ```
 
 Gmail 用户请使用 [App Password](https://myaccount.google.com/apppasswords)，不是你的登录密码。
+
+`aac config set-credential server` 存的是 relay 的 `user_id`，不是 server 密码。
 
 ## 使用
 
@@ -92,8 +98,27 @@ aac mcp                # 启动 stdio MCP server
 ## 安全
 
 - **工作区隔离**：outbound 目录（可配多个）限制可发送内容；inbound 目录限制消息写入位置。
-- **凭据安全**：邮箱密码存储在系统 keychain（macOS Keychain / Linux secret-service），不进配置文件。
+- **凭据安全**：邮箱密码和 relay server 的 `user_id` 都存储在系统 keychain（macOS Keychain / Linux secret-service），不进配置文件。
 - **配置文件**：`~/.config/aac/config.yaml`，权限 600。
+
+## 恢复 Server 访问
+
+如果你丢了本地 relay 凭据，就需要重新拿到原来的 server `user_id`。当前协议没有提供自助恢复 API。
+
+如果你有 relay server 的数据库权限，可以直接从 PostgreSQL 查出来：
+
+```bash
+docker compose exec postgres psql -U aac -d aac_relay \
+  -c "select name, status, key_id, user_id from members order by name;"
+```
+
+查到之后，再把这个 `user_id` 重新写回 keychain：
+
+```bash
+aac config set-credential server --group default
+```
+
+如果你不想继续使用旧值，也可以生成新的 `user_id`，计算对应的 `key_id`，然后更新 `members` 表中你的那一行。
 
 ## 设计
 

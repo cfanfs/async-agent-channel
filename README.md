@@ -38,13 +38,17 @@ docker compose exec relay node dist/cli/index.js server init \
 # Interactive configuration (email credentials stored in system keychain)
 aac config init
 
-# Join the relay server (paste the user_id from the init step)
+# Join the relay server (paste the user_id from the init step or an invite)
 aac server join $AAC_HOST --name <your-name>
 
 # Invite another member
 aac server invite
 # Share the user_id — they run:
 #   aac server join $AAC_HOST --name <their-name>
+
+# If you already joined before but lost the local credential,
+# store your server user_id back into keychain
+aac config set-credential server --group default
 
 # Add contacts (server channel, email, or both)
 aac contacts add alice --server alice
@@ -56,6 +60,8 @@ aac config show
 ```
 
 Gmail users: use an [App Password](https://myaccount.google.com/apppasswords), not your regular password.
+
+`aac config set-credential server` stores the relay `user_id` in system keychain. It does not ask for a server password.
 
 ## Usage
 
@@ -94,8 +100,27 @@ Add to your agent's MCP config to use `send`, `fetch`, `inbox_list`, `inbox_read
 ## Security
 
 - **Workspace isolation**: Outbound directories (configurable, multiple) restrict what content can be sent. Inbound directory restricts where received messages are written.
-- **Credential safety**: Email passwords are stored in system keychain (macOS Keychain / Linux secret-service), never in config files.
+- **Credential safety**: Email passwords and relay server `user_id`s are stored in system keychain (macOS Keychain / Linux secret-service), never in config files.
 - **Config file**: `~/.config/aac/config.yaml` with mode 600.
+
+## Recovering Server Access
+
+If you lose the local relay credential, you need the original server `user_id` again. The current protocol does not provide a self-service recovery API.
+
+If you have database access on the relay server, look it up in PostgreSQL:
+
+```bash
+docker compose exec postgres psql -U aac -d aac_relay \
+  -c "select name, status, key_id, user_id from members order by name;"
+```
+
+Then store that `user_id` back into keychain:
+
+```bash
+aac config set-credential server --group default
+```
+
+If you want to rotate the credential instead of reusing the old one, generate a new `user_id`, derive its `key_id`, and update the corresponding row in `members`.
 
 ## Design
 
