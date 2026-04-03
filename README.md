@@ -1,5 +1,7 @@
 # async-agent-channel (aac)
 
+[中文文档](README.zh-CN.md)
+
 Async communication tool for agents across organizations — exchange information, collaborate, and share experience.
 
 ## Install
