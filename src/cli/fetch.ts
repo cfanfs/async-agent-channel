@@ -1,31 +1,73 @@
 import type { Command } from "commander";
 import { loadConfig } from "../config.js";
 import { EmailChannel } from "../channel/email/index.js";
+import { ServerChannel } from "../channel/server/index.js";
 import { MessageStore } from "../store/index.js";
+import { getCredential } from "../keychain/index.js";
+import type { Message } from "../message/types.js";
 
 export function registerFetchCommand(program: Command): void {
   program
     .command("fetch")
-    .description("Fetch new messages from email into local queue")
+    .description("Fetch new messages from all configured channels")
     .action(async () => {
       const cfg = loadConfig();
-      const channel = new EmailChannel(
-        cfg.email.smtp,
-        cfg.email.imap,
-        cfg.identity.email
-      );
       const store = new MessageStore();
+      let totalFetched = 0;
+      let newCount = 0;
 
       try {
-        const messages = await channel.fetch();
-        let newCount = 0;
-        for (const msg of messages) {
-          if (store.insert(msg)) {
-            newCount++;
+        // Fetch from email if configured
+        if (cfg.email) {
+          try {
+            const channel = new EmailChannel(
+              cfg.email.smtp,
+              cfg.email.imap,
+              cfg.identity.email
+            );
+            const msgs = await channel.fetch();
+            totalFetched += msgs.length;
+            for (const msg of msgs) {
+              if (store.insert(msg)) newCount++;
+            }
+            if (msgs.length > 0) {
+              console.log(`Email: fetched ${msgs.length} message(s)`);
+            }
+          } catch (err) {
+            console.error(`Email fetch failed: ${(err as Error).message}`);
           }
         }
+
+        // Fetch from server if configured (two-phase: fetch → persist → ack)
+        if (cfg.server) {
+          try {
+            const userId = await getCredential("server", cfg.server.name);
+            if (userId) {
+              const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
+              const msgs = await channel.fetch();
+              totalFetched += msgs.length;
+
+              // Persist locally, then ack each persisted message
+              for (const msg of msgs) {
+                if (store.insert(msg)) newCount++;
+                try {
+                  await channel.ack(msg.id);
+                } catch (err) {
+                  console.error(`Server ack failed for ${msg.id}: ${(err as Error).message}`);
+                }
+              }
+
+              if (msgs.length > 0) {
+                console.log(`Server: fetched ${msgs.length} message(s)`);
+              }
+            }
+          } catch (err) {
+            console.error(`Server fetch failed: ${(err as Error).message}`);
+          }
+        }
+
         console.log(
-          `Fetched ${messages.length} message(s), ${newCount} new.`
+          `Total: ${totalFetched} message(s), ${newCount} new.`
         );
       } finally {
         store.close();

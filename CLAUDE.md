@@ -13,33 +13,50 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **双向隔离**：outbound 目录限定可发送内容，inbound 目录限定消息写入位置。aac 在传输层强制执行路径校验，防止 agent 泄露工作区外信息或恶意消息污染本地文件系统
 - **凭据安全**：SMTP/IMAP 密码存储在系统 keychain（macOS Keychain / Linux secret-service），不进配置文件
 - **异步处理**：按自己的节奏处理消息；批量处理前先分类（是否适合自己处理 / 紧急 / 重要 / 是否适合外部 LLM 处理）。分类由调用方 agent 自行判断，aac 只做传输
-- **通信方式**：Email（当前阶段）→ 常用 IM（下一阶段）
-- **无 daemon**：不需要独立后台进程。MCP 模式下随 agent 会话启停自动管理 IMAP 连接；CLI 模式下 `aac fetch` 一次性拉取
+- **通信方式**：Email + 私有中继服务器（Server Channel）。两种通道可共存，`send` 自动路由
+- **无 daemon**：客户端不需要独立后台进程。MCP 模式下自动管理 IMAP + Server 轮询；CLI 模式下 `aac fetch` 一次性拉取。中继服务器需独立部署运行
 
 ### 运行模式
 
 | 模式 | 入口 | 用途 |
 |------|------|------|
-| CLI | `aac send / inbox / fetch / listen / contacts` | 通用命令行，任何 agent harness 可调用 |
-| MCP Server | `aac mcp` | Claude Code / Cursor 等原生工具集成，自动启动 IMAP IDLE 监听 |
+| CLI | `aac send / inbox / fetch / listen / contacts / server` | 通用命令行，任何 agent harness 可调用 |
+| MCP Server | `aac mcp` | Claude Code / Cursor 等原生工具集成，自动启动 IMAP + Server 轮询 |
+| Relay Server | `aac server start --db <pg-url>` | 私有中继服务器，供多人共享通信 |
 
 ### CLI 接口
 
 ```bash
-aac send --to <contact> "消息内容"   # 发送消息（通过 email）
-aac send --to <contact> --file <path> # 发送文件内容（必须在 outbound 工作区内）
-aac fetch                            # 拉取未读邮件到本地队列
-aac listen                           # 长驻 IMAP IDLE 监听（Ctrl+C 停止）
-aac inbox                            # 列出未处理消息（摘要）
-aac inbox --from <contact>           # 按发件人过滤
-aac inbox read <id>                  # 读取具体消息
-aac inbox ack <id>                   # 标记已处理
-aac contacts list                    # 查看联系人
-aac contacts add <name> <email>      # 添加联系人
-aac contacts remove <name>           # 删除联系人
-aac config init                      # 交互式初始化配置
-aac config show                      # 查看当前配置
-aac config set-credential smtp|imap  # 存储邮箱密码到系统 keychain
+# 消息收发
+aac send --to <contact> "消息内容"       # 发送（自动路由 server/email）
+aac send --to <contact> --via server     # 强制通过 server 发送
+aac send --to <contact> --via email      # 强制通过 email 发送
+aac send --to <contact> --file <path>    # 发送文件内容（必须在 outbound 工作区内）
+aac fetch                                # 从所有通道拉取新消息
+aac listen [--poll-interval 30]          # 长驻监听（IMAP IDLE + Server 轮询）
+aac inbox                                # 列出未处理消息
+aac inbox --from <contact>               # 按发件人过滤
+aac inbox read <id>                      # 读取具体消息
+aac inbox ack <id>                       # 标记已处理
+
+# 联系人
+aac contacts list                        # 查看联系人
+aac contacts add <name> <email>          # 添加 email 联系人
+aac contacts add <name> --server <name>  # 添加 server 联系人
+aac contacts add <name> <email> --server <name>  # 同时配置两种通道
+aac contacts remove <name>               # 删除联系人
+
+# 中继服务器
+aac server init --db <pg-url>            # 初始化服务端 DB + 生成首个 user_id
+aac server start --db <pg-url>           # 启动中继服务器
+aac server join <url> --name <name>      # 加入服务器（交互输入 user_id）
+aac server invite                        # 邀请新成员（返回 user_id）
+aac server members                       # 列出服务器成员
+
+# 配置
+aac config init                          # 交互式初始化
+aac config show                          # 查看当前配置
+aac config set-credential smtp|imap|server  # 存储凭据到系统 keychain
 ```
 
 ### 配置
@@ -57,13 +74,22 @@ workspace:
     - ~/projects/public-docs             # 可配置多个
   inbound: ~/aac-workspace/received      # 收到的消息只能写入这里
 
-email:
+email:                                   # 可选（仅 email 通道需要）
   smtp: { host: smtp.gmail.com, port: 587, user: you@gmail.com }
   imap: { host: imap.gmail.com, port: 993, user: you@gmail.com }
 
+server:                                  # 可选（中继服务器通道）
+  url: https://relay.example.com:9100
+  name: yunfan                           # 你在服务器上的 display name
+  # user_id 存在 keychain（aac-server），不在配置文件中
+
 contacts:
-  alice: alice@example.com
-  bob: bob@example.com
+  alice: alice@example.com               # 纯 email（向后兼容）
+  bob:                                   # 多态联系人
+    email: bob@example.com
+    server: bob                          # 服务器上的成员名
+  carol:
+    server: carol                        # 仅 server 通道
 ```
 
 ## 技术栈
@@ -73,8 +99,10 @@ contacts:
 - **包管理**: pnpm
 - **CLI**: commander
 - **MCP**: @modelcontextprotocol/sdk
-- **本地存储**: better-sqlite3（消息队列持久化）
+- **客户端存储**: better-sqlite3（消息队列持久化）
+- **服务端存储**: PostgreSQL（pg）；后续扩展 S3（大文件）
 - **Email**: nodemailer（发送）+ imapflow（接收/IDLE）
+- **Server Channel**: HMAC-SHA256 签名认证，node:http 服务端，原生 fetch 客户端
 - **测试**: vitest
 - **分发**: npm（`npm install -g @cfanfs/aac`）
 
@@ -94,20 +122,31 @@ pnpm test -- --grep "send"               # 运行单个测试
 ```
 src/
 ├── cli/                # CLI 命令定义（commander）
-├── mcp/                # MCP server（10 个 tools，含 outbound_list/outbound_read）
+│   └── server.ts       # server init/start/join/invite/members 命令
+├── mcp/                # MCP server（12 个 tools，含 server_invite/server_members）
 ├── channel/
 │   ├── types.ts        # Channel 接口（Send/Fetch）
-│   └── email/
-│       ├── index.ts    # EmailChannel（nodemailer + imapflow）
-│       └── listener.ts # ImapListener（IMAP IDLE 长驻监听）
-├── store/              # MessageStore（SQLite，WAL 模式）
+│   ├── router.ts       # 发送路由：按联系人配置自动选择通道
+│   ├── email/
+│   │   ├── index.ts    # EmailChannel（nodemailer + imapflow）
+│   │   └── listener.ts # ImapListener（IMAP IDLE 长驻监听）
+│   └── server/
+│       ├── index.ts    # ServerChannel（HTTP 客户端，实现 Channel）
+│       └── sign.ts     # HMAC-SHA256 签名/验签（客户端+服务端共用）
+├── server/             # 中继服务器（独立部署）
+│   ├── index.ts        # RelayServer（node:http，路由分发）
+│   ├── store.ts        # ServerStore（PostgreSQL：members + messages）
+│   ├── auth.ts         # 请求认证中间件
+│   ├── handlers.ts     # API endpoint handlers
+│   └── token.ts        # generateUserId()
+├── store/              # MessageStore（SQLite，WAL 模式，客户端本地）
 ├── message/            # Message/MessageSummary 类型
 ├── keychain/           # 系统 keychain 凭据存取（macOS / Linux）
 ├── workspace/          # 双向隔离：路径校验 + 文件读写
 └── config.ts           # 配置加载/保存（~/.config/aac/）
 ```
 
-核心抽象：`Channel` 接口定义 Send/Fetch，email 是第一个实现。后续加 IM 只需新增实现，不动 CLI/MCP 层。MCP server 启动时自动开启 IMAP IDLE 后台监听。
+核心抽象：`Channel` 接口定义 Send/Fetch，email 和 server 是两个实现。`router.ts` 根据联系人配置自动选择通道（server 优先，`--via` 可覆盖）。后续加 IM 只需新增 Channel 实现。
 
 ## 协作规范
 

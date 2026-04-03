@@ -16,17 +16,44 @@ export interface ImapConfig {
   user: string;
 }
 
+export interface ServerConfig {
+  url: string;
+  name: string; // display name on this server
+}
+
+export interface ContactInfo {
+  email?: string;
+  server?: string; // member name on the server
+}
+
 export interface AacConfig {
   identity: {
     name: string;
     email: string;
   };
   workspace: WorkspaceConfig;
-  email: {
+  email?: {
     smtp: SmtpConfig;
     imap: ImapConfig;
   };
-  contacts: Record<string, string>;
+  server?: ServerConfig;
+  contacts: Record<string, string | ContactInfo>;
+}
+
+/** Normalize a contact entry to ContactInfo. */
+export function resolveContact(entry: string | ContactInfo): ContactInfo {
+  if (typeof entry === "string") return { email: entry };
+  return entry;
+}
+
+/** Determine the preferred channel for a contact. */
+export function getContactChannel(
+  contact: ContactInfo,
+  serverConfigured: boolean
+): "server" | "email" {
+  if (contact.server && serverConfigured) return "server";
+  if (contact.email) return "email";
+  throw new Error("Contact has no reachable channel configured.");
 }
 
 const CONFIG_DIR = join(homedir(), ".config", "aac");

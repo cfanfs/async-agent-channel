@@ -7,6 +7,7 @@ import {
   defaultConfig,
   configExists,
   getConfigPath,
+  resolveContact,
 } from "../config.js";
 import { setCredential, getCredential } from "../keychain/index.js";
 import { Workspace } from "../workspace/index.js";
@@ -47,43 +48,45 @@ export function registerConfigCommand(program: Command): void {
         );
         if (inbound) cfg.workspace.inbound = inbound;
 
+        // Email config — defaultConfig() guarantees email exists here
+        const email = cfg.email!;
         const smtpHost = await rl.question(
-          `SMTP host [${cfg.email.smtp.host}]: `
+          `SMTP host [${email.smtp.host}]: `
         );
-        if (smtpHost) cfg.email.smtp.host = smtpHost;
+        if (smtpHost) email.smtp.host = smtpHost;
 
         const smtpPort = await rl.question(
-          `SMTP port [${cfg.email.smtp.port}]: `
+          `SMTP port [${email.smtp.port}]: `
         );
-        if (smtpPort) cfg.email.smtp.port = parseInt(smtpPort, 10);
+        if (smtpPort) email.smtp.port = parseInt(smtpPort, 10);
 
-        cfg.email.smtp.user =
+        email.smtp.user =
           (await rl.question(`SMTP user [${cfg.identity.email}]: `)) ||
           cfg.identity.email;
 
         const smtpPass = await rl.question("SMTP password: ");
         if (smtpPass) {
-          await setCredential("smtp", cfg.email.smtp.user, smtpPass);
+          await setCredential("smtp", email.smtp.user, smtpPass);
           console.log("SMTP password saved to system keychain.");
         }
 
         const imapHost = await rl.question(
-          `IMAP host [${cfg.email.imap.host}]: `
+          `IMAP host [${email.imap.host}]: `
         );
-        if (imapHost) cfg.email.imap.host = imapHost;
+        if (imapHost) email.imap.host = imapHost;
 
         const imapPort = await rl.question(
-          `IMAP port [${cfg.email.imap.port}]: `
+          `IMAP port [${email.imap.port}]: `
         );
-        if (imapPort) cfg.email.imap.port = parseInt(imapPort, 10);
+        if (imapPort) email.imap.port = parseInt(imapPort, 10);
 
-        cfg.email.imap.user =
-          (await rl.question(`IMAP user [${cfg.email.smtp.user}]: `)) ||
-          cfg.email.smtp.user;
+        email.imap.user =
+          (await rl.question(`IMAP user [${email.smtp.user}]: `)) ||
+          email.smtp.user;
 
         const imapPass = await rl.question("IMAP password: ");
         if (imapPass) {
-          await setCredential("imap", cfg.email.imap.user, imapPass);
+          await setCredential("imap", email.imap.user, imapPass);
           console.log("IMAP password saved to system keychain.");
         }
 
@@ -115,19 +118,31 @@ export function registerConfigCommand(program: Command): void {
         console.log(`  - ${dir}`);
       }
       console.log(`Inbound workspace:  ${cfg.workspace.inbound}`);
-      console.log(`SMTP: ${cfg.email.smtp.user}@${cfg.email.smtp.host}:${cfg.email.smtp.port}`);
-      console.log(`IMAP: ${cfg.email.imap.user}@${cfg.email.imap.host}:${cfg.email.imap.port}`);
 
-      const smtpCred = await getCredential("smtp", cfg.email.smtp.user);
-      const imapCred = await getCredential("imap", cfg.email.imap.user);
-      console.log(`SMTP password: ${smtpCred ? "●●●● (in keychain)" : "NOT SET"}`);
-      console.log(`IMAP password: ${imapCred ? "●●●● (in keychain)" : "NOT SET"}`);
+      if (cfg.email) {
+        console.log(`SMTP: ${cfg.email.smtp.user}@${cfg.email.smtp.host}:${cfg.email.smtp.port}`);
+        console.log(`IMAP: ${cfg.email.imap.user}@${cfg.email.imap.host}:${cfg.email.imap.port}`);
+        const smtpCred = await getCredential("smtp", cfg.email.smtp.user);
+        const imapCred = await getCredential("imap", cfg.email.imap.user);
+        console.log(`SMTP password: ${smtpCred ? "●●●● (in keychain)" : "NOT SET"}`);
+        console.log(`IMAP password: ${imapCred ? "●●●● (in keychain)" : "NOT SET"}`);
+      } else {
+        console.log("Email: not configured");
+      }
+
+      if (cfg.server) {
+        console.log(`Server: ${cfg.server.url} (as ${cfg.server.name})`);
+      }
 
       const contacts = Object.entries(cfg.contacts);
       if (contacts.length > 0) {
         console.log(`\nContacts:`);
-        for (const [name, email] of contacts) {
-          console.log(`  ${name}: ${email}`);
+        for (const [name, entry] of contacts) {
+          const info = resolveContact(entry);
+          const parts: string[] = [];
+          if (info.email) parts.push(`email: ${info.email}`);
+          if (info.server) parts.push(`server: ${info.server}`);
+          console.log(`  ${name}: ${parts.join(", ")}`);
         }
       } else {
         console.log(`\nNo contacts configured.`);
@@ -136,16 +151,28 @@ export function registerConfigCommand(program: Command): void {
 
   config
     .command("set-credential <type>")
-    .description("Store email credential in system keychain (smtp or imap)")
+    .description("Store credential in system keychain (smtp, imap, or server)")
     .action(async (type: string) => {
-      if (type !== "smtp" && type !== "imap") {
-        console.error('Type must be "smtp" or "imap"');
+      if (type !== "smtp" && type !== "imap" && type !== "server") {
+        console.error('Type must be "smtp", "imap", or "server"');
         process.exit(1);
       }
 
       const cfg = loadConfig();
-      const account =
-        type === "smtp" ? cfg.email.smtp.user : cfg.email.imap.user;
+      let account: string;
+      if (type === "server") {
+        if (!cfg.server) {
+          console.error("Server not configured. Add a server section to config first.");
+          process.exit(1);
+        }
+        account = cfg.server.name;
+      } else {
+        if (!cfg.email) {
+          console.error("Email not configured.");
+          process.exit(1);
+        }
+        account = type === "smtp" ? cfg.email.smtp.user : cfg.email.imap.user;
+      }
 
       const rl = createInterface({ input: stdin, output: stdout });
       try {

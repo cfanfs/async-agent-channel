@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { loadConfig } from "../config.js";
-import { EmailChannel } from "../channel/email/index.js";
+import { resolveChannelForContact, type ChannelType } from "../channel/router.js";
 import { Workspace } from "../workspace/index.js";
 
 export function registerSendCommand(program: Command): void {
@@ -10,21 +10,15 @@ export function registerSendCommand(program: Command): void {
     .description("Send a message to a contact")
     .requiredOption("--to <contact>", "recipient contact name")
     .option("--subject <subject>", "message subject")
+    .option("--via <channel>", "force channel: email or server")
     .option("--file <path>", "attach file content (must be in outbound workspace)")
     .argument("[message]", "message body")
     .action(
       async (
         message: string | undefined,
-        opts: { to: string; subject?: string; file?: string }
+        opts: { to: string; subject?: string; via?: string; file?: string }
       ) => {
         const cfg = loadConfig();
-        const email = cfg.contacts[opts.to];
-        if (!email) {
-          console.error(
-            `Contact "${opts.to}" not found. Run: aac contacts list`
-          );
-          process.exit(1);
-        }
 
         let body = message ?? "";
 
@@ -42,14 +36,16 @@ export function registerSendCommand(program: Command): void {
 
         const subject =
           opts.subject ?? `[aac] Message from ${cfg.identity.name}`;
-        const channel = new EmailChannel(
-          cfg.email.smtp,
-          cfg.email.imap,
-          cfg.identity.email
+
+        const via = opts.via as ChannelType | undefined;
+        const { channel, address, type } = await resolveChannelForContact(
+          cfg,
+          opts.to,
+          via
         );
 
-        await channel.send(email, subject, body);
-        console.log(`Sent to ${opts.to} (${email})`);
+        await channel.send(address, subject, body);
+        console.log(`Sent to ${opts.to} (${address}) via ${type}`);
       }
     );
 }

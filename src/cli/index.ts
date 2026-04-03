@@ -8,6 +8,7 @@ import { registerContactsCommand } from "./contacts.js";
 import { registerConfigCommand } from "./config.js";
 import { registerListenCommand } from "./listen.js";
 import { registerMcpCommand } from "./mcp.js";
+import { registerServerCommand } from "./server.js";
 
 const program = new Command();
 
@@ -23,5 +24,6 @@ registerContactsCommand(program);
 registerConfigCommand(program);
 registerListenCommand(program);
 registerMcpCommand(program);
+registerServerCommand(program);
 
 program.parse();

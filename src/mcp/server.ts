@@ -3,11 +3,16 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig, saveConfig, configExists } from "../config.js";
+import { loadConfig, saveConfig, configExists, resolveContact, type ContactInfo } from "../config.js";
 import { EmailChannel } from "../channel/email/index.js";
+import { ServerChannel } from "../channel/server/index.js";
+import { resolveChannelForContact, type ChannelType } from "../channel/router.js";
 import { MessageStore } from "../store/index.js";
 import { Workspace } from "../workspace/index.js";
 import { ImapListener } from "../channel/email/listener.js";
+import { getCredential } from "../keychain/index.js";
+import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_SIGNATURE } from "../channel/server/sign.js";
+import type { Message } from "../message/types.js";
 
 export function createServer(): Server {
   const server = new Server(
@@ -15,10 +20,9 @@ export function createServer(): Server {
     { capabilities: { tools: {} } }
   );
 
-  // Start IMAP IDLE listener in background if configured
   if (configExists()) {
-    startIdleListener().catch((err) => {
-      console.error("IMAP IDLE listener failed to start:", err);
+    startBackgroundListeners().catch((err) => {
+      console.error("Background listener failed:", err);
     });
   }
 
@@ -26,20 +30,21 @@ export function createServer(): Server {
     tools: [
       {
         name: "send",
-        description: "Send a message to a contact",
+        description: "Send a message to a contact (auto-routes via server or email)",
         inputSchema: {
           type: "object" as const,
           properties: {
             to: { type: "string", description: "Recipient contact name" },
             subject: { type: "string", description: "Message subject (optional)" },
             body: { type: "string", description: "Message body" },
+            via: { type: "string", enum: ["email", "server"], description: "Force channel (default: auto)" },
           },
           required: ["to", "body"],
         },
       },
       {
         name: "fetch",
-        description: "Fetch new messages from email into local queue",
+        description: "Fetch new messages from all configured channels into local queue",
         inputSchema: { type: "object" as const, properties: {} },
       },
       {
@@ -48,7 +53,7 @@ export function createServer(): Server {
         inputSchema: {
           type: "object" as const,
           properties: {
-            from: { type: "string", description: "Filter by sender email" },
+            from: { type: "string", description: "Filter by sender" },
           },
         },
       },
@@ -76,19 +81,20 @@ export function createServer(): Server {
       },
       {
         name: "contacts_list",
-        description: "List all contacts",
+        description: "List all contacts with their channel info",
         inputSchema: { type: "object" as const, properties: {} },
       },
       {
         name: "contacts_add",
-        description: "Add a contact",
+        description: "Add a contact (email, server member name, or both)",
         inputSchema: {
           type: "object" as const,
           properties: {
             name: { type: "string", description: "Contact name" },
-            email: { type: "string", description: "Contact email" },
+            email: { type: "string", description: "Contact email address" },
+            server: { type: "string", description: "Member name on relay server" },
           },
-          required: ["name", "email"],
+          required: ["name"],
         },
       },
       {
@@ -101,6 +107,16 @@ export function createServer(): Server {
           },
           required: ["name"],
         },
+      },
+      {
+        name: "server_invite",
+        description: "Invite a new member to the relay server (returns user_id to share)",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      {
+        name: "server_members",
+        description: "List members on the relay server",
+        inputSchema: { type: "object" as const, properties: {} },
       },
       {
         name: "outbound_list",
@@ -142,6 +158,10 @@ export function createServer(): Server {
         return handleContactsAdd(a);
       case "contacts_remove":
         return handleContactsRemove(a);
+      case "server_invite":
+        return await handleServerInvite();
+      case "server_members":
+        return await handleServerMembers();
       case "outbound_list":
         return handleOutboundList();
       case "outbound_read":
@@ -161,29 +181,58 @@ function text(content: string) {
 async function handleSend(a: Record<string, unknown>) {
   const cfg = loadConfig();
   const contactName = a.to as string;
-  const email = cfg.contacts[contactName];
-  if (!email) {
-    return text(`Contact "${contactName}" not found. Available: ${Object.keys(cfg.contacts).join(", ") || "(none)"}`);
-  }
-
   const subject = (a.subject as string) ?? `[aac] Message from ${cfg.identity.name}`;
   const body = a.body as string;
-  const channel = new EmailChannel(cfg.email.smtp, cfg.email.imap, cfg.identity.email);
-  await channel.send(email, subject, body);
-  return text(`Sent to ${contactName} (${email})`);
+  const via = a.via as ChannelType | undefined;
+
+  try {
+    const { channel, address, type } = await resolveChannelForContact(cfg, contactName, via);
+    await channel.send(address, subject, body);
+    return text(`Sent to ${contactName} (${address}) via ${type}`);
+  } catch (err) {
+    return text(`Send failed: ${(err as Error).message}`);
+  }
 }
 
 async function handleFetch() {
   const cfg = loadConfig();
-  const channel = new EmailChannel(cfg.email.smtp, cfg.email.imap, cfg.identity.email);
   const store = new MessageStore();
+  let totalFetched = 0;
+  let newCount = 0;
+
   try {
-    const messages = await channel.fetch();
-    let newCount = 0;
-    for (const msg of messages) {
-      if (store.insert(msg)) newCount++;
+    if (cfg.email) {
+      try {
+        const channel = new EmailChannel(cfg.email.smtp, cfg.email.imap, cfg.identity.email);
+        const msgs = await channel.fetch();
+        totalFetched += msgs.length;
+        for (const msg of msgs) {
+          if (store.insert(msg)) newCount++;
+        }
+      } catch (err) {
+        console.error(`Email fetch error: ${(err as Error).message}`);
+      }
     }
-    return text(`Fetched ${messages.length} message(s), ${newCount} new.`);
+
+    // Two-phase: fetch → persist → ack
+    if (cfg.server) {
+      try {
+        const userId = await getCredential("server", cfg.server.name);
+        if (userId) {
+          const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
+          const msgs = await channel.fetch();
+          totalFetched += msgs.length;
+          for (const msg of msgs) {
+            if (store.insert(msg)) newCount++;
+            try { await channel.ack(msg.id); } catch { /* non-fatal */ }
+          }
+        }
+      } catch (err) {
+        console.error(`Server fetch error: ${(err as Error).message}`);
+      }
+    }
+
+    return text(`Fetched ${totalFetched} message(s), ${newCount} new.`);
   } finally {
     store.close();
   }
@@ -243,14 +292,35 @@ function handleContactsList() {
   const cfg = loadConfig();
   const entries = Object.entries(cfg.contacts);
   if (entries.length === 0) return text("No contacts configured.");
-  return text(entries.map(([name, email]) => `${name}: ${email}`).join("\n"));
+  return text(entries.map(([name, entry]) => {
+    const info = resolveContact(entry);
+    const parts: string[] = [];
+    if (info.email) parts.push(`email: ${info.email}`);
+    if (info.server) parts.push(`server: ${info.server}`);
+    return `${name}: ${parts.join(", ")}`;
+  }).join("\n"));
 }
 
 function handleContactsAdd(a: Record<string, unknown>) {
   const cfg = loadConfig();
   const name = a.name as string;
-  const email = a.email as string;
-  cfg.contacts[name] = email;
+  const email = a.email as string | undefined;
+  const serverName = a.server as string | undefined;
+
+  if (!email && !serverName) {
+    return text("Provide at least email or server member name.");
+  }
+
+  if (email && !serverName) {
+    cfg.contacts[name] = email;
+  } else {
+    const existing = cfg.contacts[name] ? resolveContact(cfg.contacts[name]) : {};
+    const updated: ContactInfo = { ...existing };
+    if (email) updated.email = email;
+    if (serverName) updated.server = serverName;
+    cfg.contacts[name] = updated;
+  }
+
   saveConfig(cfg);
   return text(`Contact "${name}" saved.`);
 }
@@ -262,6 +332,68 @@ function handleContactsRemove(a: Record<string, unknown>) {
   delete cfg.contacts[name];
   saveConfig(cfg);
   return text(`Contact "${name}" removed.`);
+}
+
+async function handleServerInvite() {
+  const cfg = loadConfig();
+  if (!cfg.server) return text("Server not configured.");
+
+  const userId = await getCredential("server", cfg.server.name);
+  if (!userId) return text("Server user_id not found in keychain.");
+
+  const path = "/api/v1/members/invite";
+  const body = "";
+  const { keyId, timestamp, signature } = signRequest("POST", path, body, userId);
+
+  const res = await fetch(`${cfg.server.url}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      [HEADER_KEY_ID]: keyId,
+      [HEADER_TIMESTAMP]: timestamp,
+      [HEADER_SIGNATURE]: signature,
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    return text(`Invite failed: ${res.status}`);
+  }
+
+  const data = await res.json() as { user_id: string };
+  return text(`Invite created.\n\nuser_id: ${data.user_id}\n\nShare this with the new member. They should run:\n  aac server join ${cfg.server.url} --name <their-name>`);
+}
+
+async function handleServerMembers() {
+  const cfg = loadConfig();
+  if (!cfg.server) return text("Server not configured.");
+
+  const userId = await getCredential("server", cfg.server.name);
+  if (!userId) return text("Server user_id not found in keychain.");
+
+  const path = "/api/v1/members";
+  const body = "";
+  const { keyId, timestamp, signature } = signRequest("GET", path, body, userId);
+
+  const res = await fetch(`${cfg.server.url}${path}`, {
+    method: "GET",
+    headers: {
+      [HEADER_KEY_ID]: keyId,
+      [HEADER_TIMESTAMP]: timestamp,
+      [HEADER_SIGNATURE]: signature,
+    },
+  });
+
+  if (!res.ok) {
+    return text(`Failed: ${res.status}`);
+  }
+
+  const data = await res.json() as { members: Array<{ name: string }> };
+  if (data.members.length === 0) return text("No members.");
+  return text(data.members.map((m) => {
+    const me = m.name === cfg.server!.name ? " (you)" : "";
+    return `  ${m.name}${me}`;
+  }).join("\n"));
 }
 
 function handleOutboundList() {
@@ -290,23 +422,58 @@ function handleOutboundRead(a: Record<string, unknown>) {
   }
 }
 
-async function startIdleListener(): Promise<void> {
+async function startBackgroundListeners(): Promise<void> {
   const cfg = loadConfig();
   const store = new MessageStore();
 
-  const listener = new ImapListener(
-    cfg.email.imap,
-    cfg.identity.email,
-    (messages) => {
-      let newCount = 0;
-      for (const msg of messages) {
-        if (store.insert(msg)) newCount++;
-      }
-      if (newCount > 0) {
-        console.error(`aac: ${newCount} new message(s) received`);
-      }
+  const onMessages = (source: string) => (messages: Message[]) => {
+    let newCount = 0;
+    for (const msg of messages) {
+      if (store.insert(msg)) newCount++;
     }
-  );
+    if (newCount > 0) {
+      console.error(`aac: ${newCount} new message(s) from ${source}`);
+    }
+  };
 
-  await listener.start();
+  // IMAP IDLE listener
+  if (cfg.email) {
+    const listener = new ImapListener(
+      cfg.email.imap,
+      cfg.identity.email,
+      onMessages("email")
+    );
+    listener.start().catch((err) => {
+      console.error("IMAP listener error:", (err as Error).message);
+    });
+  }
+
+  // Server polling (two-phase: fetch → persist → ack)
+  if (cfg.server) {
+    const userId = await getCredential("server", cfg.server.name);
+    if (userId) {
+      const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
+      const poll = async () => {
+        while (true) {
+          try {
+            const msgs = await channel.fetch();
+            if (msgs.length > 0) {
+              let newCount = 0;
+              for (const msg of msgs) {
+                if (store.insert(msg)) newCount++;
+                try { await channel.ack(msg.id); } catch { /* retry next poll */ }
+              }
+              if (newCount > 0) {
+                console.error(`aac: ${newCount} new message(s) from server`);
+              }
+            }
+          } catch (err) {
+            console.error("Server poll error:", (err as Error).message);
+          }
+          await new Promise((r) => setTimeout(r, 30_000));
+        }
+      };
+      poll();
+    }
+  }
 }
