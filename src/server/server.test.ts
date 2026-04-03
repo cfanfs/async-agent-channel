@@ -29,11 +29,12 @@ describe.skipIf(!pgAvailable)("relay server", () => {
     body: string,
     userId: string
   ): Record<string, string> {
-    const { keyId, timestamp, signature } = signRequest(method, path, body, userId);
+    const { keyId, timestamp, nonce, signature } = signRequest(method, path, body, userId);
     return {
       "Content-Type": "application/json",
       "x-aac-key-id": keyId,
       "x-aac-timestamp": timestamp,
+      "x-aac-nonce": nonce,
       "x-aac-signature": signature,
     };
   }
@@ -118,9 +119,10 @@ describe.skipIf(!pgAvailable)("relay server", () => {
       invitedUserId = data.user_id;
     });
 
-    it("new member joins with user_id", async () => {
+    it("new member joins with signed request", async () => {
       const { status, data } = await req("POST", "/api/v1/members/join", {
-        body: { user_id: invitedUserId, name: "bob" },
+        userId: invitedUserId,
+        body: { name: "bob" },
       });
       expect(status).toBe(200);
       expect(data.ok).toBe(true);
@@ -129,9 +131,10 @@ describe.skipIf(!pgAvailable)("relay server", () => {
 
     it("cannot join again with same invite", async () => {
       const { status } = await req("POST", "/api/v1/members/join", {
-        body: { user_id: invitedUserId, name: "bob2" },
+        userId: invitedUserId,
+        body: { name: "bob2" },
       });
-      expect(status).toBe(404);
+      expect(status).toBe(409); // already joined
     });
 
     it("rejects duplicate name on join", async () => {
@@ -141,7 +144,8 @@ describe.skipIf(!pgAvailable)("relay server", () => {
       });
       // Try to join with same name as existing member "bob"
       const { status, data: joinData } = await req("POST", "/api/v1/members/join", {
-        body: { user_id: data.user_id, name: "bob" },
+        userId: data.user_id,
+        body: { name: "bob" },
       });
       expect(status).toBe(409);
       expect(joinData.error).toContain("already taken");
@@ -157,7 +161,8 @@ describe.skipIf(!pgAvailable)("relay server", () => {
       });
       bobUserId = data.user_id;
       await req("POST", "/api/v1/members/join", {
-        body: { user_id: bobUserId, name: "bob-msg" },
+        userId: bobUserId,
+        body: { name: "bob-msg" },
       });
     });
 

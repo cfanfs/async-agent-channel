@@ -53,6 +53,14 @@ export class ServerStore {
         delivered BOOLEAN NOT NULL DEFAULT FALSE
       )
     `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS request_nonces (
+        key_id    TEXT NOT NULL,
+        nonce     TEXT NOT NULL,
+        timestamp BIGINT NOT NULL,
+        PRIMARY KEY (key_id, nonce)
+      )
+    `);
   }
 
   // --- Members ---
@@ -131,11 +139,38 @@ export class ServerStore {
     return result.rows;
   }
 
-  async markDelivered(ids: string[]): Promise<void> {
-    if (ids.length === 0) return;
+  /** Mark a message as delivered, but only if it belongs to the given recipient. */
+  async ackMessageForRecipient(id: string, toName: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE messages SET delivered = TRUE WHERE id = $1 AND to_name = $2 AND delivered = FALSE`,
+      [id, toName]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // --- Nonces (replay protection) ---
+
+  /** Store a nonce atomically. Returns true if new, false if replayed. */
+  async checkAndStoreNonce(keyId: string, nonce: string): Promise<boolean> {
+    try {
+      await this.pool.query(
+        `INSERT INTO request_nonces (key_id, nonce, timestamp) VALUES ($1, $2, $3)`,
+        [keyId, nonce, Date.now()]
+      );
+      return true;
+    } catch (err: any) {
+      // Unique constraint violation = duplicate nonce
+      if (err.code === "23505") return false;
+      throw err;
+    }
+  }
+
+  /** Clean up expired nonces older than the given age (ms). */
+  async cleanupNonces(maxAgeMs: number): Promise<void> {
+    const cutoff = Date.now() - maxAgeMs;
     await this.pool.query(
-      `UPDATE messages SET delivered = TRUE WHERE id = ANY($1)`,
-      [ids]
+      `DELETE FROM request_nonces WHERE timestamp < $1`,
+      [cutoff]
     );
   }
 

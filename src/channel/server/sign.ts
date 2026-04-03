@@ -1,4 +1,4 @@
-import { createHmac, createHash } from "node:crypto";
+import { createHmac, createHash, randomUUID } from "node:crypto";
 
 /**
  * Derive a public key_id from a user_id (first 16 hex chars of SHA256).
@@ -13,9 +13,10 @@ export function buildSigningString(
   method: string,
   path: string,
   timestamp: string,
+  nonce: string,
   body: string
 ): string {
-  return `${method}\n${path}\n${timestamp}\n${body}`;
+  return `${method}\n${path}\n${timestamp}\n${nonce}\n${body}`;
 }
 
 /** Compute HMAC-SHA256 signature. */
@@ -26,6 +27,7 @@ export function computeSignature(signingString: string, userId: string): string 
 /** Header names used by the signing protocol. */
 export const HEADER_KEY_ID = "x-aac-key-id";
 export const HEADER_TIMESTAMP = "x-aac-timestamp";
+export const HEADER_NONCE = "x-aac-nonce";
 export const HEADER_SIGNATURE = "x-aac-signature";
 
 /** Max age of a signed request (5 minutes). */
@@ -39,12 +41,13 @@ export function signRequest(
   path: string,
   body: string,
   userId: string
-): { keyId: string; timestamp: string; signature: string } {
+): { keyId: string; timestamp: string; nonce: string; signature: string } {
   const keyId = deriveKeyId(userId);
   const timestamp = new Date().toISOString();
-  const signingString = buildSigningString(method, path, timestamp, body);
+  const nonce = randomUUID();
+  const signingString = buildSigningString(method, path, timestamp, nonce, body);
   const signature = computeSignature(signingString, userId);
-  return { keyId, timestamp, signature };
+  return { keyId, timestamp, nonce, signature };
 }
 
 /**
@@ -54,6 +57,7 @@ export function verifySignature(
   method: string,
   path: string,
   timestamp: string,
+  nonce: string,
   body: string,
   userId: string,
   providedSignature: string
@@ -64,7 +68,7 @@ export function verifySignature(
   const drift = Math.abs(Date.now() - requestTime);
   if (drift > MAX_TIMESTAMP_DRIFT_MS) return false;
 
-  const signingString = buildSigningString(method, path, timestamp, body);
+  const signingString = buildSigningString(method, path, timestamp, nonce, body);
   const expected = computeSignature(signingString, userId);
 
   // Constant-time comparison

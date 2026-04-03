@@ -17,9 +17,12 @@ export interface RelayServerConfig {
   db: ServerStoreConfig;
 }
 
+import { MAX_TIMESTAMP_DRIFT_MS } from "../channel/server/sign.js";
+
 export class RelayServer {
   private server: ReturnType<typeof createServer> | null = null;
   private store: ServerStore;
+  private nonceCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private config: RelayServerConfig) {
     this.store = new ServerStore(config.db);
@@ -30,10 +33,15 @@ export class RelayServer {
 
     this.server = createServer((req, res) => {
       this.handleRequest(req, res).catch((err) => {
-        console.error("Unhandled error:", err);
         if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Internal server error" }));
+          if (err instanceof BodyTooLargeError) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Request body too large" }));
+          } else {
+            console.error("Unhandled error:", err);
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Internal server error" }));
+          }
         }
       });
     });
@@ -45,9 +53,20 @@ export class RelayServer {
         resolve();
       });
     });
+
+    // Periodically clean up expired nonces (every 10 minutes)
+    this.nonceCleanupTimer = setInterval(() => {
+      this.store.cleanupNonces(MAX_TIMESTAMP_DRIFT_MS * 2).catch((err) => {
+        console.error("Nonce cleanup error:", err);
+      });
+    }, 10 * 60 * 1000);
   }
 
   async stop(): Promise<void> {
+    if (this.nonceCleanupTimer) {
+      clearInterval(this.nonceCleanupTimer);
+      this.nonceCleanupTimer = null;
+    }
     if (this.server) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
     }
@@ -72,12 +91,19 @@ export class RelayServer {
       return;
     }
 
+    // --- Join: authenticated but allows pending members ---
     if (method === "POST" && path === "/api/v1/members/join") {
-      await handleJoin(res, body, this.store);
+      const joinAuth = await authenticateRequest(req, body, this.store, { allowPending: true });
+      if (!joinAuth.ok || !joinAuth.member) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: joinAuth.error ?? "Unauthorized" }));
+        return;
+      }
+      await handleJoin(res, body, joinAuth.member, this.store);
       return;
     }
 
-    // --- Authenticated routes ---
+    // --- Authenticated routes (active members only) ---
     const auth = await authenticateRequest(req, body, this.store);
     if (!auth.ok || !auth.member) {
       res.writeHead(401, { "Content-Type": "application/json" });
@@ -119,10 +145,25 @@ export class RelayServer {
   }
 }
 
+const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
+
+class BodyTooLargeError extends Error {
+  constructor() { super("Request body too large"); }
+}
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+    let bytes = 0;
+    req.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new BodyTooLargeError());
+        return;
+      }
+      data += chunk.toString();
+    });
     req.on("end", () => resolve(data));
     req.on("error", reject);
   });

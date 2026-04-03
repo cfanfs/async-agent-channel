@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import {
   HEADER_KEY_ID,
   HEADER_TIMESTAMP,
+  HEADER_NONCE,
   HEADER_SIGNATURE,
   verifySignature,
 } from "../channel/server/sign.js";
@@ -15,18 +16,20 @@ export interface AuthResult {
 
 /**
  * Authenticate a signed request.
- * Extracts signing headers, looks up the member, and verifies the HMAC.
+ * Extracts signing headers, looks up the member, verifies HMAC, and rejects replayed nonces.
  */
 export async function authenticateRequest(
   req: IncomingMessage,
   body: string,
-  store: ServerStore
+  store: ServerStore,
+  opts?: { allowPending?: boolean }
 ): Promise<AuthResult> {
   const keyId = req.headers[HEADER_KEY_ID] as string | undefined;
   const timestamp = req.headers[HEADER_TIMESTAMP] as string | undefined;
+  const nonce = req.headers[HEADER_NONCE] as string | undefined;
   const signature = req.headers[HEADER_SIGNATURE] as string | undefined;
 
-  if (!keyId || !timestamp || !signature) {
+  if (!keyId || !timestamp || !nonce || !signature) {
     return { ok: false, error: "Missing authentication headers" };
   }
 
@@ -35,7 +38,7 @@ export async function authenticateRequest(
     return { ok: false, error: "Unknown key ID" };
   }
 
-  if (member.status !== "active") {
+  if (!opts?.allowPending && member.status !== "active") {
     return { ok: false, error: "Member is not active" };
   }
 
@@ -46,6 +49,7 @@ export async function authenticateRequest(
     req.method ?? "GET",
     path,
     timestamp,
+    nonce,
     body,
     member.user_id,
     signature
@@ -53,6 +57,12 @@ export async function authenticateRequest(
 
   if (!valid) {
     return { ok: false, error: "Invalid signature" };
+  }
+
+  // Reject replayed nonces
+  const nonceAccepted = await store.checkAndStoreNonce(keyId, nonce);
+  if (!nonceAccepted) {
+    return { ok: false, error: "Replayed request (duplicate nonce)" };
   }
 
   return { ok: true, member };

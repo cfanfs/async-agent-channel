@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { ServerStore, MemberRow } from "./store.js";
 import { generateUserId } from "./token.js";
-import { deriveKeyId, verifySignature, buildSigningString, computeSignature } from "../channel/server/sign.js";
+import { deriveKeyId } from "../channel/server/sign.js";
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -26,15 +26,22 @@ export async function handleInvite(
 }
 
 /**
- * POST /api/v1/members/join — unauthenticated in the normal sense.
- * The caller proves they hold a valid user_id by signing the request with it.
+ * POST /api/v1/members/join — authenticated via HMAC (pending members allowed).
+ * Body: { name } — the display name to claim.
+ * The caller proves possession of the user_id by signing the request.
  */
 export async function handleJoin(
   res: ServerResponse,
   body: string,
+  member: MemberRow,
   store: ServerStore
 ): Promise<void> {
-  let parsed: { user_id?: string; name?: string };
+  if (member.status !== "pending") {
+    json(res, 409, { error: "Already joined" });
+    return;
+  }
+
+  let parsed: { name?: string };
   try {
     parsed = JSON.parse(body);
   } catch {
@@ -42,22 +49,9 @@ export async function handleJoin(
     return;
   }
 
-  const { user_id, name } = parsed;
-  if (!user_id || !name) {
-    json(res, 400, { error: "Missing user_id or name" });
-    return;
-  }
-
-  const keyId = deriveKeyId(user_id);
-  const member = await store.getMemberByKeyId(keyId);
-  if (!member || member.status !== "pending") {
-    json(res, 404, { error: "Invalid or already used invite" });
-    return;
-  }
-
-  // Verify the caller actually holds this user_id
-  if (member.user_id !== user_id) {
-    json(res, 401, { error: "Invalid user_id" });
+  const { name } = parsed;
+  if (!name) {
+    json(res, 400, { error: "Missing name" });
     return;
   }
 
@@ -67,13 +61,13 @@ export async function handleJoin(
     return;
   }
 
-  const activated = await store.activateMember(keyId, name);
+  const activated = await store.activateMember(member.key_id, name);
   if (!activated) {
     json(res, 409, { error: "Member already active" });
     return;
   }
 
-  json(res, 200, { ok: true, name, key_id: keyId });
+  json(res, 200, { ok: true, name, key_id: member.key_id });
 }
 
 /** GET /api/v1/members — authenticated, lists active members. */
@@ -145,13 +139,17 @@ export async function handleFetchMessages(
   });
 }
 
-/** POST /api/v1/messages/:id/ack — authenticated, marks message as delivered after client persistence. */
+/** POST /api/v1/messages/:id/ack — authenticated, only the recipient can ack their own messages. */
 export async function handleAckMessage(
   res: ServerResponse,
   id: string,
-  _member: MemberRow,
+  member: MemberRow,
   store: ServerStore
 ): Promise<void> {
-  await store.markDelivered([id]);
+  const acked = await store.ackMessageForRecipient(id, member.name!);
+  if (!acked) {
+    json(res, 404, { error: "Message not found or not yours" });
+    return;
+  }
   json(res, 200, { ok: true });
 }

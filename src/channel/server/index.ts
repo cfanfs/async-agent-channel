@@ -4,8 +4,19 @@ import {
   signRequest,
   HEADER_KEY_ID,
   HEADER_TIMESTAMP,
+  HEADER_NONCE,
   HEADER_SIGNATURE,
 } from "./sign.js";
+
+function signedHeaders(method: string, path: string, body: string, userId: string) {
+  const { keyId, timestamp, nonce, signature } = signRequest(method, path, body, userId);
+  return {
+    [HEADER_KEY_ID]: keyId,
+    [HEADER_TIMESTAMP]: timestamp,
+    [HEADER_NONCE]: nonce,
+    [HEADER_SIGNATURE]: signature,
+  };
+}
 
 export class ServerChannel implements Channel {
   constructor(
@@ -17,15 +28,12 @@ export class ServerChannel implements Channel {
   async send(toMemberName: string, subject: string, body: string): Promise<void> {
     const path = "/api/v1/messages";
     const payload = JSON.stringify({ to: toMemberName, subject, body });
-    const { keyId, timestamp, signature } = signRequest("POST", path, payload, this.userId);
 
     const res = await fetch(`${this.serverUrl}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [HEADER_KEY_ID]: keyId,
-        [HEADER_TIMESTAMP]: timestamp,
-        [HEADER_SIGNATURE]: signature,
+        ...signedHeaders("POST", path, payload, this.userId),
       },
       body: payload,
     });
@@ -38,16 +46,10 @@ export class ServerChannel implements Channel {
 
   async fetch(): Promise<Message[]> {
     const path = "/api/v1/messages";
-    const body = "";
-    const { keyId, timestamp, signature } = signRequest("GET", path, body, this.userId);
 
     const res = await fetch(`${this.serverUrl}${path}`, {
       method: "GET",
-      headers: {
-        [HEADER_KEY_ID]: keyId,
-        [HEADER_TIMESTAMP]: timestamp,
-        [HEADER_SIGNATURE]: signature,
-      },
+      headers: signedHeaders("GET", path, "", this.userId),
     });
 
     if (!res.ok) {
@@ -80,17 +82,11 @@ export class ServerChannel implements Channel {
   /** Acknowledge a message after local persistence. Marks it delivered on the server. */
   async ack(messageId: string): Promise<void> {
     const path = `/api/v1/messages/${encodeURIComponent(messageId)}/ack`;
-    const body = "";
-    const { keyId, timestamp, signature } = signRequest("POST", path, body, this.userId);
 
     const res = await fetch(`${this.serverUrl}${path}`, {
       method: "POST",
-      headers: {
-        [HEADER_KEY_ID]: keyId,
-        [HEADER_TIMESTAMP]: timestamp,
-        [HEADER_SIGNATURE]: signature,
-      },
-      body,
+      headers: signedHeaders("POST", path, "", this.userId),
+      body: "",
     });
 
     if (!res.ok) {

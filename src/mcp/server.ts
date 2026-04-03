@@ -11,8 +11,18 @@ import { MessageStore } from "../store/index.js";
 import { Workspace } from "../workspace/index.js";
 import { ImapListener } from "../channel/email/listener.js";
 import { getCredential } from "../keychain/index.js";
-import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_SIGNATURE } from "../channel/server/sign.js";
+import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE } from "../channel/server/sign.js";
 import type { Message } from "../message/types.js";
+
+function signedHeaders(method: string, path: string, body: string, userId: string) {
+  const { keyId, timestamp, nonce, signature } = signRequest(method, path, body, userId);
+  return {
+    [HEADER_KEY_ID]: keyId,
+    [HEADER_TIMESTAMP]: timestamp,
+    [HEADER_NONCE]: nonce,
+    [HEADER_SIGNATURE]: signature,
+  };
+}
 
 export function createServer(): Server {
   const server = new Server(
@@ -343,15 +353,12 @@ async function handleServerInvite() {
 
   const path = "/api/v1/members/invite";
   const body = "";
-  const { keyId, timestamp, signature } = signRequest("POST", path, body, userId);
 
   const res = await fetch(`${cfg.server.url}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      [HEADER_KEY_ID]: keyId,
-      [HEADER_TIMESTAMP]: timestamp,
-      [HEADER_SIGNATURE]: signature,
+      ...signedHeaders("POST", path, body, userId),
     },
     body,
   });
@@ -372,16 +379,10 @@ async function handleServerMembers() {
   if (!userId) return text("Server user_id not found in keychain.");
 
   const path = "/api/v1/members";
-  const body = "";
-  const { keyId, timestamp, signature } = signRequest("GET", path, body, userId);
 
   const res = await fetch(`${cfg.server.url}${path}`, {
     method: "GET",
-    headers: {
-      [HEADER_KEY_ID]: keyId,
-      [HEADER_TIMESTAMP]: timestamp,
-      [HEADER_SIGNATURE]: signature,
-    },
+    headers: signedHeaders("GET", path, "", userId),
   });
 
   if (!res.ok) {
