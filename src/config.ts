@@ -36,7 +36,8 @@ export interface AacConfig {
     smtp: SmtpConfig;
     imap: ImapConfig;
   };
-  server?: ServerConfig;
+  server?: ServerConfig; // DEPRECATED — kept for migration only
+  servers?: Record<string, ServerConfig>;
   contacts: Record<string, string | ContactInfo>;
 }
 
@@ -54,6 +55,66 @@ export function getContactChannel(
   if (contact.server && serverConfigured) return "server";
   if (contact.email) return "email";
   throw new Error("Contact has no reachable channel configured.");
+}
+
+// --- Multi-server helpers ---
+
+/** Parse "alice@work" → { memberName: "alice", group: "work" }. Bare name defaults to "default". */
+export function parseServerRef(ref: string): { memberName: string; group: string } {
+  const at = ref.lastIndexOf("@");
+  if (at === -1) return { memberName: ref, group: "default" };
+  return { memberName: ref.slice(0, at), group: ref.slice(at + 1) };
+}
+
+/** Get servers map with legacy fallback: single `server` → `{ default: server }`. */
+export function getServersMap(cfg: AacConfig): Record<string, ServerConfig> {
+  if (cfg.servers && Object.keys(cfg.servers).length > 0) return cfg.servers;
+  if (cfg.server) return { default: cfg.server };
+  return {};
+}
+
+/** Look up a specific server group. Throws with helpful error if not found. */
+export function getServerConfig(cfg: AacConfig, group: string): ServerConfig {
+  const map = getServersMap(cfg);
+  const sc = map[group];
+  if (!sc) {
+    const available = Object.keys(map);
+    throw new Error(
+      available.length > 0
+        ? `Server group "${group}" not found. Available: ${available.join(", ")}`
+        : "No servers configured. Run: aac server join <url> --name <name> --group <alias>"
+    );
+  }
+  return sc;
+}
+
+/** Resolve group when --group is optional: use it if given, default to the only group, error if ambiguous. */
+export function resolveGroup(cfg: AacConfig, explicit?: string): string {
+  if (explicit) return explicit;
+  const groups = Object.keys(getServersMap(cfg));
+  if (groups.length === 0) throw new Error("No servers configured.");
+  if (groups.length === 1) return groups[0];
+  throw new Error(`Multiple server groups configured. Specify --group: ${groups.join(", ")}`);
+}
+
+/** Migrate legacy config: single server → servers map, bare contact names → name@default. */
+function migrateConfig(cfg: AacConfig): boolean {
+  let migrated = false;
+
+  if (cfg.server && !cfg.servers) {
+    cfg.servers = { default: cfg.server };
+    delete cfg.server;
+    migrated = true;
+  }
+
+  for (const [, entry] of Object.entries(cfg.contacts)) {
+    if (typeof entry === "object" && entry.server && !entry.server.includes("@")) {
+      entry.server = `${entry.server}@default`;
+      migrated = true;
+    }
+  }
+
+  return migrated;
 }
 
 const CONFIG_DIR = join(homedir(), ".config", "aac");
@@ -78,7 +139,11 @@ export function loadConfig(): AacConfig {
     );
   }
   const raw = readFileSync(CONFIG_PATH, "utf-8");
-  return parse(raw) as AacConfig;
+  const cfg = parse(raw) as AacConfig;
+  if (migrateConfig(cfg)) {
+    saveConfig(cfg);
+  }
+  return cfg;
 }
 
 export function saveConfig(config: AacConfig): void {

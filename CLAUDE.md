@@ -41,22 +41,23 @@ aac inbox ack <id>                       # 标记已处理
 
 # 联系人
 aac contacts list                        # 查看联系人
+aac contacts list --group work           # 按 server group 过滤
 aac contacts add <name> <email>          # 添加 email 联系人
-aac contacts add <name> --server <name>  # 添加 server 联系人
-aac contacts add <name> <email> --server <name>  # 同时配置两种通道
+aac contacts add <name> --server alice@work  # 添加 server 联系人（name@group）
+aac contacts add <name> <email> --server alice@work  # 同时配置两种通道
 aac contacts remove <name>               # 删除联系人
 
-# 中继服务器
+# 中继服务器（支持多 server/group）
 aac server init --db <pg-url>            # 初始化服务端 DB + 生成首个 user_id
 aac server start --db <pg-url>           # 启动中继服务器
-aac server join <url> --name <name>      # 加入服务器（交互输入 user_id）
-aac server invite                        # 邀请新成员（返回 user_id）
-aac server members                       # 列出服务器成员
+aac server join <url> --name <name> --group <alias>  # 加入服务器
+aac server invite [--group <alias>]      # 邀请新成员
+aac server members [--group <alias>]     # 列出服务器成员
 
 # 配置
 aac config init                          # 交互式初始化
 aac config show                          # 查看当前配置
-aac config set-credential smtp|imap|server  # 存储凭据到系统 keychain
+aac config set-credential smtp|imap|server [--group <alias>]  # 存储凭据
 ```
 
 ### 配置
@@ -78,18 +79,21 @@ email:                                   # 可选（仅 email 通道需要）
   smtp: { host: smtp.gmail.com, port: 587, user: you@gmail.com }
   imap: { host: imap.gmail.com, port: 993, user: you@gmail.com }
 
-server:                                  # 可选（中继服务器通道）
-  url: https://relay.example.com:9100
-  name: yunfan                           # 你在服务器上的 display name
-  # user_id 存在 keychain（aac-server），不在配置文件中
+servers:                                 # 可选，支持多个 server（每个 ≈ 一个 group）
+  work:                                  # 本地 alias（group name）
+    url: https://relay.work.com:9100
+    name: yunfan                         # 你在这个 server 上的 display name
+  friends:                               # user_id 存在 keychain（aac-server-<group>）
+    url: https://relay.friends.com:9100
+    name: yf
 
 contacts:
   alice: alice@example.com               # 纯 email（向后兼容）
   bob:                                   # 多态联系人
     email: bob@example.com
-    server: bob                          # 服务器上的成员名
+    server: bob@work                     # name@group 格式
   carol:
-    server: carol                        # 仅 server 通道
+    server: carol@friends                # 仅 server 通道
 ```
 
 ## 技术栈

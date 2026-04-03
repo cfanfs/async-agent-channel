@@ -3,7 +3,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig, saveConfig, configExists, resolveContact, type ContactInfo } from "../config.js";
+import { loadConfig, saveConfig, configExists, resolveContact, parseServerRef, getServersMap, resolveGroup, type ContactInfo } from "../config.js";
 import { EmailChannel } from "../channel/email/index.js";
 import { ServerChannel } from "../channel/server/index.js";
 import { resolveChannelForContact, type ChannelType } from "../channel/router.js";
@@ -92,7 +92,12 @@ export function createServer(): Server {
       {
         name: "contacts_list",
         description: "List all contacts with their channel info",
-        inputSchema: { type: "object" as const, properties: {} },
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            group: { type: "string", description: "Filter by server group" },
+          },
+        },
       },
       {
         name: "contacts_add",
@@ -102,7 +107,7 @@ export function createServer(): Server {
           properties: {
             name: { type: "string", description: "Contact name" },
             email: { type: "string", description: "Contact email address" },
-            server: { type: "string", description: "Member name on relay server" },
+            server: { type: "string", description: "Member name on relay server (format: name@group)" },
           },
           required: ["name"],
         },
@@ -121,12 +126,22 @@ export function createServer(): Server {
       {
         name: "server_invite",
         description: "Invite a new member to the relay server (returns user_id to share)",
-        inputSchema: { type: "object" as const, properties: {} },
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            group: { type: "string", description: "Server group alias (defaults to only group if just one)" },
+          },
+        },
       },
       {
         name: "server_members",
         description: "List members on the relay server",
-        inputSchema: { type: "object" as const, properties: {} },
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            group: { type: "string", description: "Server group alias (defaults to only group if just one)" },
+          },
+        },
       },
       {
         name: "outbound_list",
@@ -163,15 +178,15 @@ export function createServer(): Server {
       case "inbox_ack":
         return handleInboxAck(a);
       case "contacts_list":
-        return handleContactsList();
+        return handleContactsList(a);
       case "contacts_add":
         return handleContactsAdd(a);
       case "contacts_remove":
         return handleContactsRemove(a);
       case "server_invite":
-        return await handleServerInvite();
+        return await handleServerInvite(a);
       case "server_members":
-        return await handleServerMembers();
+        return await handleServerMembers(a);
       case "outbound_list":
         return handleOutboundList();
       case "outbound_read":
@@ -224,21 +239,22 @@ async function handleFetch() {
       }
     }
 
-    // Two-phase: fetch → persist → ack
-    if (cfg.server) {
+    // Two-phase: fetch → persist → ack (all server groups)
+    for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
       try {
-        const userId = await getCredential("server", cfg.server.name);
+        const userId = await getCredential(`server-${group}`, serverConfig.name);
         if (userId) {
-          const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
+          const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);
           const msgs = await channel.fetch();
           totalFetched += msgs.length;
           for (const msg of msgs) {
+            msg.from = `${msg.from}@${group}`;
             if (store.insert(msg)) newCount++;
             try { await channel.ack(msg.id); } catch { /* non-fatal */ }
           }
         }
       } catch (err) {
-        console.error(`Server fetch error: ${(err as Error).message}`);
+        console.error(`Server [${group}] fetch error: ${(err as Error).message}`);
       }
     }
 
@@ -298,36 +314,56 @@ function handleInboxAck(a: Record<string, unknown>) {
   }
 }
 
-function handleContactsList() {
+function handleContactsList(a: Record<string, unknown>) {
   const cfg = loadConfig();
+  const groupFilter = a.group as string | undefined;
   const entries = Object.entries(cfg.contacts);
   if (entries.length === 0) return text("No contacts configured.");
-  return text(entries.map(([name, entry]) => {
+
+  const lines: string[] = [];
+  for (const [name, entry] of entries) {
     const info = resolveContact(entry);
+    if (groupFilter && info.server) {
+      const { group } = parseServerRef(info.server);
+      if (group !== groupFilter) continue;
+    } else if (groupFilter && !info.server) {
+      continue;
+    }
     const parts: string[] = [];
     if (info.email) parts.push(`email: ${info.email}`);
     if (info.server) parts.push(`server: ${info.server}`);
-    return `${name}: ${parts.join(", ")}`;
-  }).join("\n"));
+    lines.push(`${name}: ${parts.join(", ")}`);
+  }
+
+  return text(lines.length > 0 ? lines.join("\n") : "No contacts match the filter.");
 }
 
 function handleContactsAdd(a: Record<string, unknown>) {
   const cfg = loadConfig();
   const name = a.name as string;
   const email = a.email as string | undefined;
-  const serverName = a.server as string | undefined;
+  const serverRef = a.server as string | undefined;
 
-  if (!email && !serverName) {
-    return text("Provide at least email or server member name.");
+  if (!email && !serverRef) {
+    return text("Provide at least email or server member name (format: name@group).");
   }
 
-  if (email && !serverName) {
+  // Validate server ref format
+  if (serverRef) {
+    const { group } = parseServerRef(serverRef);
+    const serversMap = getServersMap(cfg);
+    if (!serversMap[group]) {
+      return text(`Server group "${group}" not found. Available: ${Object.keys(serversMap).join(", ") || "(none)"}`);
+    }
+  }
+
+  if (email && !serverRef) {
     cfg.contacts[name] = email;
   } else {
     const existing = cfg.contacts[name] ? resolveContact(cfg.contacts[name]) : {};
     const updated: ContactInfo = { ...existing };
     if (email) updated.email = email;
-    if (serverName) updated.server = serverName;
+    if (serverRef) updated.server = serverRef;
     cfg.contacts[name] = updated;
   }
 
@@ -344,17 +380,23 @@ function handleContactsRemove(a: Record<string, unknown>) {
   return text(`Contact "${name}" removed.`);
 }
 
-async function handleServerInvite() {
+async function handleServerInvite(a: Record<string, unknown>) {
   const cfg = loadConfig();
-  if (!cfg.server) return text("Server not configured.");
+  let group: string;
+  try {
+    group = resolveGroup(cfg, a.group as string | undefined);
+  } catch (err) {
+    return text((err as Error).message);
+  }
+  const serverConfig = getServersMap(cfg)[group]!;
 
-  const userId = await getCredential("server", cfg.server.name);
-  if (!userId) return text("Server user_id not found in keychain.");
+  const userId = await getCredential(`server-${group}`, serverConfig.name);
+  if (!userId) return text(`Server user_id not found in keychain for group "${group}".`);
 
   const path = "/api/v1/members/invite";
   const body = "";
 
-  const res = await fetch(`${cfg.server.url}${path}`, {
+  const res = await fetch(`${serverConfig.url}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -368,19 +410,25 @@ async function handleServerInvite() {
   }
 
   const data = await res.json() as { user_id: string };
-  return text(`Invite created.\n\nuser_id: ${data.user_id}\n\nShare this with the new member. They should run:\n  aac server join ${cfg.server.url} --name <their-name>`);
+  return text(`Invite created.\n\nuser_id: ${data.user_id}\n\nShare this with the new member. They should run:\n  aac server join ${serverConfig.url} --name <their-name> --group ${group}`);
 }
 
-async function handleServerMembers() {
+async function handleServerMembers(a: Record<string, unknown>) {
   const cfg = loadConfig();
-  if (!cfg.server) return text("Server not configured.");
+  let group: string;
+  try {
+    group = resolveGroup(cfg, a.group as string | undefined);
+  } catch (err) {
+    return text((err as Error).message);
+  }
+  const serverConfig = getServersMap(cfg)[group]!;
 
-  const userId = await getCredential("server", cfg.server.name);
-  if (!userId) return text("Server user_id not found in keychain.");
+  const userId = await getCredential(`server-${group}`, serverConfig.name);
+  if (!userId) return text(`Server user_id not found in keychain for group "${group}".`);
 
   const path = "/api/v1/members";
 
-  const res = await fetch(`${cfg.server.url}${path}`, {
+  const res = await fetch(`${serverConfig.url}${path}`, {
     method: "GET",
     headers: signedHeaders("GET", path, "", userId),
   });
@@ -392,7 +440,7 @@ async function handleServerMembers() {
   const data = await res.json() as { members: Array<{ name: string }> };
   if (data.members.length === 0) return text("No members.");
   return text(data.members.map((m) => {
-    const me = m.name === cfg.server!.name ? " (you)" : "";
+    const me = m.name === serverConfig.name ? " (you)" : "";
     return `  ${m.name}${me}`;
   }).join("\n"));
 }
@@ -449,32 +497,33 @@ async function startBackgroundListeners(): Promise<void> {
     });
   }
 
-  // Server polling (two-phase: fetch → persist → ack)
-  if (cfg.server) {
-    const userId = await getCredential("server", cfg.server.name);
-    if (userId) {
-      const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
-      const poll = async () => {
-        while (true) {
-          try {
-            const msgs = await channel.fetch();
-            if (msgs.length > 0) {
-              let newCount = 0;
-              for (const msg of msgs) {
-                if (store.insert(msg)) newCount++;
-                try { await channel.ack(msg.id); } catch { /* retry next poll */ }
-              }
-              if (newCount > 0) {
-                console.error(`aac: ${newCount} new message(s) from server`);
-              }
+  // Server polling (two-phase: fetch → persist → ack) for all groups
+  for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
+    const userId = await getCredential(`server-${group}`, serverConfig.name);
+    if (!userId) continue;
+
+    const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);
+    const poll = async () => {
+      while (true) {
+        try {
+          const msgs = await channel.fetch();
+          if (msgs.length > 0) {
+            let newCount = 0;
+            for (const msg of msgs) {
+              msg.from = `${msg.from}@${group}`;
+              if (store.insert(msg)) newCount++;
+              try { await channel.ack(msg.id); } catch { /* retry next poll */ }
             }
-          } catch (err) {
-            console.error("Server poll error:", (err as Error).message);
+            if (newCount > 0) {
+              console.error(`aac: ${newCount} new message(s) from server [${group}]`);
+            }
           }
-          await new Promise((r) => setTimeout(r, 30_000));
+        } catch (err) {
+          console.error(`Server [${group}] poll error:`, (err as Error).message);
         }
-      };
-      poll();
-    }
+        await new Promise((r) => setTimeout(r, 30_000));
+      }
+    };
+    poll();
   }
 }

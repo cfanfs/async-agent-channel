@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { loadConfig, saveConfig } from "../config.js";
+import { loadConfig, saveConfig, getServersMap, resolveGroup } from "../config.js";
 import { setCredential, getCredential } from "../keychain/index.js";
 import { RelayServer } from "../server/index.js";
 import { generateUserId } from "../server/token.js";
@@ -42,7 +42,7 @@ export function registerServerCommand(program: Command): void {
       console.log(`\nYour user_id (save this — it won't be shown again):\n\n  ${userId}\n`);
       console.log("Next steps:");
       console.log("  1. Start the server:  aac server start --db <url>");
-      console.log("  2. Join the server:   aac server join <server-url> --name <your-name>");
+      console.log("  2. Join the server:   aac server join <server-url> --name <your-name> --group <alias>");
       console.log("     (paste the user_id when prompted)");
 
       await store.close();
@@ -76,7 +76,8 @@ export function registerServerCommand(program: Command): void {
     .command("join <url>")
     .description("Join a relay server with an invite user_id")
     .requiredOption("--name <name>", "Your display name on this server")
-    .action(async (url: string, opts: { name: string }) => {
+    .option("--group <alias>", "Local group alias for this server", "default")
+    .action(async (url: string, opts: { name: string; group: string }) => {
       // Validate local config exists before consuming the one-time invite
       let cfg;
       try {
@@ -124,19 +125,23 @@ export function registerServerCommand(program: Command): void {
         // Save locally — if this fails, print recovery info
         const serverUrl = url.replace(/\/$/, "");
         try {
-          cfg.server = { url: serverUrl, name: opts.name };
+          const serversMap = getServersMap(cfg);
+          serversMap[opts.group] = { url: serverUrl, name: opts.name };
+          cfg.servers = serversMap;
+          delete cfg.server; // clean up legacy field
           saveConfig(cfg);
-          await setCredential("server", opts.name, userId);
+          await setCredential(`server-${opts.group}`, opts.name, userId);
         } catch (err) {
           console.error(`Local persistence failed: ${(err as Error).message}`);
           console.error(`\nYour membership was created on the server. Save this for manual recovery:`);
           console.error(`  Server URL: ${serverUrl}`);
           console.error(`  Name:       ${opts.name}`);
+          console.error(`  Group:      ${opts.group}`);
           console.error(`  user_id:    ${userId}`);
           process.exit(1);
         }
 
-        console.log(`Joined server as "${opts.name}".`);
+        console.log(`Joined server as "${opts.name}" (group: ${opts.group}).`);
         console.log(`Server URL saved to config. user_id stored in keychain.`);
       } finally {
         rl.close();
@@ -146,23 +151,22 @@ export function registerServerCommand(program: Command): void {
   server
     .command("invite")
     .description("Invite a new member to the relay server")
-    .action(async () => {
+    .option("--group <group>", "Server group to invite on")
+    .action(async (opts: { group?: string }) => {
       const cfg = loadConfig();
-      if (!cfg.server) {
-        console.error("Server not configured. Run: aac server join <url> --name <name>");
-        process.exit(1);
-      }
+      const group = resolveGroup(cfg, opts.group);
+      const serverConfig = getServersMap(cfg)[group]!;
 
-      const userId = await getCredential("server", cfg.server.name);
+      const userId = await getCredential(`server-${group}`, serverConfig.name);
       if (!userId) {
-        console.error("Server user_id not found in keychain.");
+        console.error(`Server user_id not found in keychain for group "${group}".`);
         process.exit(1);
       }
 
       const path = "/api/v1/members/invite";
       const body = "";
 
-      const res = await fetch(`${cfg.server.url}${path}`, {
+      const res = await fetch(`${serverConfig.url}${path}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -179,28 +183,27 @@ export function registerServerCommand(program: Command): void {
 
       const data = await res.json() as { user_id: string };
       console.log(`Invite created. Share this user_id with the new member:\n\n  ${data.user_id}\n`);
-      console.log(`They should run:  aac server join ${cfg.server.url} --name <their-name>`);
+      console.log(`They should run:  aac server join ${serverConfig.url} --name <their-name> --group ${group}`);
     });
 
   server
     .command("members")
     .description("List members on the relay server")
-    .action(async () => {
+    .option("--group <group>", "Server group to list")
+    .action(async (opts: { group?: string }) => {
       const cfg = loadConfig();
-      if (!cfg.server) {
-        console.error("Server not configured.");
-        process.exit(1);
-      }
+      const group = resolveGroup(cfg, opts.group);
+      const serverConfig = getServersMap(cfg)[group]!;
 
-      const userId = await getCredential("server", cfg.server.name);
+      const userId = await getCredential(`server-${group}`, serverConfig.name);
       if (!userId) {
-        console.error("Server user_id not found in keychain.");
+        console.error(`Server user_id not found in keychain for group "${group}".`);
         process.exit(1);
       }
 
       const path = "/api/v1/members";
 
-      const res = await fetch(`${cfg.server.url}${path}`, {
+      const res = await fetch(`${serverConfig.url}${path}`, {
         method: "GET",
         headers: signedHeaders("GET", path, "", userId),
       });
@@ -216,7 +219,7 @@ export function registerServerCommand(program: Command): void {
         return;
       }
       for (const m of data.members) {
-        const me = m.name === cfg.server!.name ? " (you)" : "";
+        const me = m.name === serverConfig.name ? " (you)" : "";
         console.log(`  ${m.name}${me}`);
       }
     });

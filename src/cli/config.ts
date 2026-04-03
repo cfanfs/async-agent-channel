@@ -8,6 +8,8 @@ import {
   configExists,
   getConfigPath,
   resolveContact,
+  getServersMap,
+  resolveGroup,
 } from "../config.js";
 import { setCredential, getCredential } from "../keychain/index.js";
 import { Workspace } from "../workspace/index.js";
@@ -130,8 +132,15 @@ export function registerConfigCommand(program: Command): void {
         console.log("Email: not configured");
       }
 
-      if (cfg.server) {
-        console.log(`Server: ${cfg.server.url} (as ${cfg.server.name})`);
+      const serversMap = getServersMap(cfg);
+      const groups = Object.entries(serversMap);
+      if (groups.length > 0) {
+        console.log(`Servers:`);
+        for (const [group, sc] of groups) {
+          console.log(`  ${group}: ${sc.url} (as ${sc.name})`);
+        }
+      } else {
+        console.log("Servers: not configured");
       }
 
       const contacts = Object.entries(cfg.contacts);
@@ -152,7 +161,8 @@ export function registerConfigCommand(program: Command): void {
   config
     .command("set-credential <type>")
     .description("Store credential in system keychain (smtp, imap, or server)")
-    .action(async (type: string) => {
+    .option("--group <group>", "Server group (for type=server)")
+    .action(async (type: string, opts: { group?: string }) => {
       if (type !== "smtp" && type !== "imap" && type !== "server") {
         console.error('Type must be "smtp", "imap", or "server"');
         process.exit(1);
@@ -160,18 +170,19 @@ export function registerConfigCommand(program: Command): void {
 
       const cfg = loadConfig();
       let account: string;
+      let credentialKey: string;
       if (type === "server") {
-        if (!cfg.server) {
-          console.error("Server not configured. Add a server section to config first.");
-          process.exit(1);
-        }
-        account = cfg.server.name;
+        const group = resolveGroup(cfg, opts.group);
+        const serverConfig = getServersMap(cfg)[group]!;
+        account = serverConfig.name;
+        credentialKey = `server-${group}`;
       } else {
         if (!cfg.email) {
           console.error("Email not configured.");
           process.exit(1);
         }
         account = type === "smtp" ? cfg.email.smtp.user : cfg.email.imap.user;
+        credentialKey = type;
       }
 
       const rl = createInterface({ input: stdin, output: stdout });
@@ -181,8 +192,8 @@ export function registerConfigCommand(program: Command): void {
           console.log("Aborted.");
           return;
         }
-        await setCredential(type, account, password);
-        console.log(`${type.toUpperCase()} password saved to system keychain.`);
+        await setCredential(credentialKey, account, password);
+        console.log(`${type.toUpperCase()} credential saved to system keychain.`);
       } finally {
         rl.close();
       }

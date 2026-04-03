@@ -1,5 +1,17 @@
 import type { Command } from "commander";
-import { loadConfig, saveConfig, resolveContact, type ContactInfo } from "../config.js";
+import { loadConfig, saveConfig, resolveContact, parseServerRef, getServersMap, type ContactInfo } from "../config.js";
+import { getCredential } from "../keychain/index.js";
+import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE } from "../channel/server/sign.js";
+
+function signedHeaders(method: string, path: string, body: string, userId: string) {
+  const { keyId, timestamp, nonce, signature } = signRequest(method, path, body, userId);
+  return {
+    [HEADER_KEY_ID]: keyId,
+    [HEADER_TIMESTAMP]: timestamp,
+    [HEADER_NONCE]: nonce,
+    [HEADER_SIGNATURE]: signature,
+  };
+}
 
 export function registerContactsCommand(program: Command): void {
   const contacts = program
@@ -9,7 +21,8 @@ export function registerContactsCommand(program: Command): void {
   contacts
     .command("list")
     .description("List all contacts")
-    .action(async () => {
+    .option("--group <group>", "Filter contacts by server group")
+    .action(async (opts: { group?: string }) => {
       const cfg = loadConfig();
       const entries = Object.entries(cfg.contacts);
       if (entries.length === 0) {
@@ -18,6 +31,12 @@ export function registerContactsCommand(program: Command): void {
       }
       for (const [name, entry] of entries) {
         const info = resolveContact(entry);
+        if (opts.group && info.server) {
+          const { group } = parseServerRef(info.server);
+          if (group !== opts.group) continue;
+        } else if (opts.group && !info.server) {
+          continue;
+        }
         const parts: string[] = [];
         if (info.email) parts.push(`email: ${info.email}`);
         if (info.server) parts.push(`server: ${info.server}`);
@@ -30,14 +49,46 @@ export function registerContactsCommand(program: Command): void {
     .description("Add a contact")
     .argument("[email]", "contact email address")
     .option("--email <email>", "contact email address")
-    .option("--server <name>", "member name on the relay server")
+    .option("--server <ref>", "member name on relay server (format: name@group)")
     .action(async (name: string, emailArg: string | undefined, opts: { email?: string; server?: string }) => {
       const cfg = loadConfig();
       const email = opts.email ?? emailArg;
 
       if (!email && !opts.server) {
-        console.error("Provide an email address or --server <name>.");
+        console.error("Provide an email address or --server <name@group>.");
         process.exit(1);
+      }
+
+      // Validate server ref format and check member exists
+      if (opts.server) {
+        const { memberName, group } = parseServerRef(opts.server);
+        const serversMap = getServersMap(cfg);
+        const serverConfig = serversMap[group];
+        if (!serverConfig) {
+          console.error(`Server group "${group}" not found. Available: ${Object.keys(serversMap).join(", ") || "(none)"}`);
+          process.exit(1);
+        }
+
+        // Remote validation: check if member exists on server
+        const userId = await getCredential(`server-${group}`, serverConfig.name);
+        if (userId) {
+          try {
+            const path = "/api/v1/members";
+            const res = await fetch(`${serverConfig.url}${path}`, {
+              method: "GET",
+              headers: signedHeaders("GET", path, "", userId),
+            });
+            if (res.ok) {
+              const data = await res.json() as { members: Array<{ name: string }> };
+              const exists = data.members.some((m) => m.name === memberName);
+              if (!exists) {
+                console.warn(`Warning: member "${memberName}" not found on server group "${group}". Contact saved anyway.`);
+              }
+            }
+          } catch {
+            // Non-fatal: server might be unreachable, still save the contact
+          }
+        }
       }
 
       // Build the contact entry

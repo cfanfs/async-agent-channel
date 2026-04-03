@@ -1,10 +1,9 @@
 import type { Command } from "commander";
-import { loadConfig } from "../config.js";
+import { loadConfig, getServersMap } from "../config.js";
 import { EmailChannel } from "../channel/email/index.js";
 import { ServerChannel } from "../channel/server/index.js";
 import { MessageStore } from "../store/index.js";
 import { getCredential } from "../keychain/index.js";
-import type { Message } from "../message/types.js";
 
 export function registerFetchCommand(program: Command): void {
   program
@@ -38,31 +37,32 @@ export function registerFetchCommand(program: Command): void {
           }
         }
 
-        // Fetch from server if configured (two-phase: fetch → persist → ack)
-        if (cfg.server) {
+        // Fetch from all server groups (two-phase: fetch → persist → ack)
+        for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
           try {
-            const userId = await getCredential("server", cfg.server.name);
+            const userId = await getCredential(`server-${group}`, serverConfig.name);
             if (userId) {
-              const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
+              const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);
               const msgs = await channel.fetch();
               totalFetched += msgs.length;
 
               // Persist locally, then ack each persisted message
               for (const msg of msgs) {
+                msg.from = `${msg.from}@${group}`;
                 if (store.insert(msg)) newCount++;
                 try {
                   await channel.ack(msg.id);
                 } catch (err) {
-                  console.error(`Server ack failed for ${msg.id}: ${(err as Error).message}`);
+                  console.error(`Server [${group}] ack failed for ${msg.id}: ${(err as Error).message}`);
                 }
               }
 
               if (msgs.length > 0) {
-                console.log(`Server: fetched ${msgs.length} message(s)`);
+                console.log(`Server [${group}]: fetched ${msgs.length} message(s)`);
               }
             }
           } catch (err) {
-            console.error(`Server fetch failed: ${(err as Error).message}`);
+            console.error(`Server [${group}] fetch failed: ${(err as Error).message}`);
           }
         }
 

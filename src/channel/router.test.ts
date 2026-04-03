@@ -5,7 +5,8 @@ import type { AacConfig } from "../config.js";
 // Mock getCredential to avoid keychain access in tests
 vi.mock("../keychain/index.js", () => ({
   getCredential: vi.fn(async (key: string, account: string) => {
-    if (key === "server" && account === "me") return "test-user-id";
+    if (key === "server-default" && account === "me") return "test-user-id";
+    if (key === "server-work" && account === "me") return "test-user-id-work";
     return null;
   }),
 }));
@@ -18,11 +19,11 @@ function makeConfig(overrides?: Partial<AacConfig>): AacConfig {
       smtp: { host: "smtp.example.com", port: 587, user: "me@example.com" },
       imap: { host: "imap.example.com", port: 993, user: "me@example.com" },
     },
-    server: { url: "http://localhost:9100", name: "me" },
+    servers: { default: { url: "http://localhost:9100", name: "me" } },
     contacts: {
       alice: "alice@example.com",
-      bob: { email: "bob@example.com", server: "bob" },
-      carol: { server: "carol" },
+      bob: { email: "bob@example.com", server: "bob@default" },
+      carol: { server: "carol@default" },
       dave: { email: "dave@example.com" },
     },
     ...overrides,
@@ -54,14 +55,14 @@ describe("resolveChannelForContact", () => {
     expect(result.address).toBe("bob@example.com");
   });
 
-  it("email contact + via server (no global server) → throws", async () => {
-    const cfg = makeConfig({ server: undefined });
+  it("email contact + via server (no servers) → throws", async () => {
+    const cfg = makeConfig({ servers: undefined });
     await expect(
       resolveChannelForContact(cfg, "dave", "server")
-    ).rejects.toThrow("Server not configured");
+    ).rejects.toThrow("no server member name configured");
   });
 
-  it("email contact + via server (no server field) → throws", async () => {
+  it("email contact + via server (no server field on contact) → throws", async () => {
     await expect(
       resolveChannelForContact(makeConfig(), "dave", "server")
     ).rejects.toThrow("no server member name configured");
@@ -74,15 +75,39 @@ describe("resolveChannelForContact", () => {
   });
 
   it("server contact without server config → falls back to email", async () => {
-    const cfg = makeConfig({ server: undefined });
+    const cfg = makeConfig({ servers: undefined });
     const result = await resolveChannelForContact(cfg, "bob");
     expect(result.type).toBe("email");
   });
 
   it("server contact without server config and no email → throws", async () => {
-    const cfg = makeConfig({ server: undefined });
+    const cfg = makeConfig({ servers: undefined });
     await expect(
       resolveChannelForContact(cfg, "carol")
     ).rejects.toThrow("no reachable channel");
+  });
+
+  it("contact on specific group resolves correctly", async () => {
+    const cfg = makeConfig({
+      servers: {
+        default: { url: "http://localhost:9100", name: "me" },
+        work: { url: "http://work:9100", name: "me" },
+      },
+      contacts: {
+        eve: { server: "eve@work" },
+      },
+    });
+    const result = await resolveChannelForContact(cfg, "eve");
+    expect(result.type).toBe("server");
+    expect(result.address).toBe("eve");
+  });
+
+  it("contact referencing nonexistent group → throws", async () => {
+    const cfg = makeConfig({
+      contacts: { eve: { server: "eve@nonexistent" } },
+    });
+    await expect(
+      resolveChannelForContact(cfg, "eve")
+    ).rejects.toThrow('Server group "nonexistent" not found');
   });
 });

@@ -2,7 +2,7 @@ import type { Channel } from "./types.js";
 import { EmailChannel } from "./email/index.js";
 import { ServerChannel } from "./server/index.js";
 import type { AacConfig, ContactInfo } from "../config.js";
-import { resolveContact, getContactChannel } from "../config.js";
+import { resolveContact, getContactChannel, parseServerRef, getServersMap, getServerConfig } from "../config.js";
 import { getCredential } from "../keychain/index.js";
 
 export type ChannelType = "email" | "server";
@@ -28,7 +28,7 @@ export async function resolveChannelForContact(
   }
 
   const contact = resolveContact(raw);
-  const serverConfigured = !!cfg.server;
+  const serverConfigured = Object.keys(getServersMap(cfg)).length > 0;
   const type = viaOverride ?? getContactChannel(contact, serverConfigured);
 
   if (type === "server") {
@@ -42,24 +42,23 @@ async function resolveServerChannel(
   contact: ContactInfo,
   contactName: string
 ): Promise<ResolvedChannel> {
-  if (!cfg.server) {
-    throw new Error("Server not configured.");
-  }
   if (!contact.server) {
     throw new Error(
-      `Contact "${contactName}" has no server member name configured. Use: aac contacts add ${contactName} --server <member-name>`
+      `Contact "${contactName}" has no server member name configured. Use: aac contacts add ${contactName} --server <name@group>`
     );
   }
-  const memberName = contact.server;
 
-  const userId = await getCredential("server", cfg.server.name);
+  const { memberName, group } = parseServerRef(contact.server);
+  const serverConfig = getServerConfig(cfg, group);
+
+  const userId = await getCredential(`server-${group}`, serverConfig.name);
   if (!userId) {
     throw new Error(
-      `Server user_id not found in keychain for "${cfg.server.name}". Run: aac config set-credential server`
+      `Server user_id not found in keychain for group "${group}" (name: "${serverConfig.name}"). Run: aac config set-credential server --group ${group}`
     );
   }
 
-  const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
+  const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);
   return { channel, address: memberName, type: "server" };
 }
 

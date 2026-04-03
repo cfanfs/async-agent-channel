@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { loadConfig } from "../config.js";
+import { loadConfig, getServersMap } from "../config.js";
 import { ImapListener } from "../channel/email/listener.js";
 import { ServerChannel } from "../channel/server/index.js";
 import { MessageStore } from "../store/index.js";
@@ -41,42 +41,42 @@ export function registerListenCommand(program: Command): void {
         });
       }
 
-      // Start server polling if server configured
-      if (cfg.server) {
-        const userId = await getCredential("server", cfg.server.name);
-        if (userId) {
-          const channel = new ServerChannel(cfg.server.url, cfg.server.name, userId);
-          const intervalMs = parseInt(opts.pollInterval, 10) * 1000;
-          let running = true;
+      // Start server polling for all configured groups
+      for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
+        const userId = await getCredential(`server-${group}`, serverConfig.name);
+        if (!userId) continue;
 
-          const poll = async () => {
-            while (running) {
-              try {
-                const msgs = await channel.fetch();
-                if (msgs.length > 0) {
-                  // Persist locally, then ack each message
-                  let newCount = 0;
-                  for (const msg of msgs) {
-                    if (store.insert(msg)) newCount++;
-                    try { await channel.ack(msg.id); } catch { /* retry on next poll */ }
-                  }
-                  if (newCount > 0) {
-                    console.log(
-                      `${new Date().toISOString()} — server: ${newCount} new message(s)`
-                    );
-                  }
+        const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);
+        const intervalMs = parseInt(opts.pollInterval, 10) * 1000;
+        let running = true;
+
+        const poll = async () => {
+          while (running) {
+            try {
+              const msgs = await channel.fetch();
+              if (msgs.length > 0) {
+                let newCount = 0;
+                for (const msg of msgs) {
+                  msg.from = `${msg.from}@${group}`;
+                  if (store.insert(msg)) newCount++;
+                  try { await channel.ack(msg.id); } catch { /* retry on next poll */ }
                 }
-              } catch (err) {
-                console.error("Server poll error:", (err as Error).message);
+                if (newCount > 0) {
+                  console.log(
+                    `${new Date().toISOString()} — server [${group}]: ${newCount} new message(s)`
+                  );
+                }
               }
-              await new Promise((r) => setTimeout(r, intervalMs));
+            } catch (err) {
+              console.error(`Server [${group}] poll error:`, (err as Error).message);
             }
-          };
+            await new Promise((r) => setTimeout(r, intervalMs));
+          }
+        };
 
-          cleanups.push(async () => { running = false; });
-          console.log(`Starting server polling (every ${opts.pollInterval}s)...`);
-          poll();
-        }
+        cleanups.push(async () => { running = false; });
+        console.log(`Starting server [${group}] polling (every ${opts.pollInterval}s)...`);
+        poll();
       }
 
       if (cleanups.length === 0) {
