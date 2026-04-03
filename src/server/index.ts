@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ServerStore, type ServerStoreConfig } from "./store.js";
 import { authenticateRequest } from "./auth.js";
+import { ObjectStore, loadS3ConfigFromEnv } from "./s3.js";
 import {
   handleHealth,
   handleInvite,
@@ -22,6 +23,7 @@ import { MAX_TIMESTAMP_DRIFT_MS } from "../channel/server/sign.js";
 export class RelayServer {
   private server: ReturnType<typeof createServer> | null = null;
   private store: ServerStore;
+  private objectStore?: ObjectStore;
   private nonceCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private config: RelayServerConfig) {
@@ -30,6 +32,13 @@ export class RelayServer {
 
   async start(): Promise<void> {
     await this.store.migrate();
+
+    const s3Config = loadS3ConfigFromEnv();
+    if (s3Config) {
+      this.objectStore = new ObjectStore(s3Config);
+      await this.objectStore.ensureBucket();
+      console.log(`S3 object storage enabled (bucket: ${s3Config.bucket})`);
+    }
 
     this.server = createServer((req, res) => {
       this.handleRequest(req, res).catch((err) => {
@@ -82,8 +91,12 @@ export class RelayServer {
     const method = req.method ?? "GET";
     const path = (req.url ?? "/").split("?")[0];
 
-    // Read body for all requests (needed for signature verification)
-    const body = await readBody(req);
+    // Route-based body limit: only message uploads accept large bodies.
+    // All other routes (auth, members, ack) stay at 1MB to prevent
+    // unauthenticated clients from forcing large memory allocations.
+    const isMessageUpload = method === "POST" && path === "/api/v1/messages";
+    const bodyLimit = isMessageUpload ? MAX_BODY_BYTES : DEFAULT_BODY_LIMIT;
+    const body = await readBody(req, bodyLimit);
 
     // --- Unauthenticated routes ---
     if (method === "GET" && path === "/health") {
@@ -124,12 +137,12 @@ export class RelayServer {
     }
 
     if (method === "POST" && path === "/api/v1/messages") {
-      await handleSendMessage(res, body, member, this.store);
+      await handleSendMessage(res, body, member, this.store, this.objectStore);
       return;
     }
 
     if (method === "GET" && path === "/api/v1/messages") {
-      await handleFetchMessages(res, member, this.store);
+      await handleFetchMessages(res, member, this.store, this.objectStore);
       return;
     }
 
@@ -145,19 +158,23 @@ export class RelayServer {
   }
 }
 
-const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
+const DEFAULT_BODY_LIMIT = 1024 * 1024; // 1 MB — for non-upload routes
+const MAX_BODY_BYTES = parseInt(
+  process.env.AAC_MAX_BODY_BYTES ?? String(50 * 1024 * 1024),
+  10
+); // default 50 MB — for message uploads only
 
 class BodyTooLargeError extends Error {
   constructor() { super("Request body too large"); }
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
     let bytes = 0;
     req.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
-      if (bytes > MAX_BODY_BYTES) {
+      if (bytes > limit) {
         req.destroy();
         reject(new BodyTooLargeError());
         return;

@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { ServerStore, MemberRow } from "./store.js";
+import type { ObjectStore } from "./s3.js";
+import { isS3Reference, makeS3Reference, extractS3Key } from "./s3.js";
 import { generateUserId } from "./token.js";
 import { deriveKeyId } from "../channel/server/sign.js";
+
+const MAX_INLINE_BODY_BYTES = 1024 * 1024; // 1 MB
+const S3_OFFLOAD_THRESHOLD = parseInt(
+  process.env.AAC_S3_THRESHOLD ?? String(64 * 1024),
+  10
+);
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -85,7 +93,8 @@ export async function handleSendMessage(
   res: ServerResponse,
   body: string,
   member: MemberRow,
-  store: ServerStore
+  store: ServerStore,
+  objectStore?: ObjectStore
 ): Promise<void> {
   let parsed: { to?: string; subject?: string; body?: string };
   try {
@@ -108,12 +117,24 @@ export async function handleSendMessage(
   }
 
   const id = randomUUID();
+
+  // Offload large bodies to S3
+  let storeBody = parsed.body;
+  if (objectStore && parsed.body.length > S3_OFFLOAD_THRESHOLD) {
+    const key = `messages/${id}`;
+    await objectStore.put(key, parsed.body);
+    storeBody = makeS3Reference(key);
+  } else if (!objectStore && parsed.body.length > MAX_INLINE_BODY_BYTES) {
+    json(res, 413, { error: "Message body too large. Configure S3 storage for large messages." });
+    return;
+  }
+
   await store.insertMessage({
     id,
     from_name: member.name!,
     to_name: parsed.to,
     subject: parsed.subject ?? "",
-    body: parsed.body,
+    body: storeBody,
     timestamp: Date.now(),
   });
 
@@ -124,11 +145,32 @@ export async function handleSendMessage(
 export async function handleFetchMessages(
   res: ServerResponse,
   member: MemberRow,
-  store: ServerStore
+  store: ServerStore,
+  objectStore?: ObjectStore
 ): Promise<void> {
   const messages = await store.getUndeliveredMessages(member.name!);
+
+  // Resolve S3 references back to inline bodies.
+  // Unresolvable messages are skipped (remain undelivered, retried on next fetch).
+  const resolved = [];
+  for (const m of messages) {
+    if (isS3Reference(m.body)) {
+      if (!objectStore) {
+        console.warn(`Skipping message ${m.id}: S3 not configured`);
+        continue;
+      }
+      try {
+        m.body = await objectStore.get(extractS3Key(m.body));
+      } catch (err) {
+        console.error(`Skipping message ${m.id}: S3 read failed:`, err);
+        continue;
+      }
+    }
+    resolved.push(m);
+  }
+
   json(res, 200, {
-    messages: messages.map((m) => ({
+    messages: resolved.map((m) => ({
       id: m.id,
       from: m.from_name,
       to: m.to_name,

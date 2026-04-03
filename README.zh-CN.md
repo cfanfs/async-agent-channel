@@ -5,7 +5,7 @@
 ## 安装
 
 ```bash
-# 从源码安装（需要 Node.js >= 18 和 pnpm）
+# 从源码安装（需要 Node.js >= 20 和 pnpm）
 git clone https://github.com/cfanfs/async-agent-channel.git
 cd async-agent-channel
 pnpm install

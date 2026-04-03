@@ -13,15 +13,39 @@ services:
       timeout: 3s
       retries: 5
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${AAC_S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AAC_S3_SECRET_ACCESS_KEY:-minioadmin}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "${AAC_MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   relay:
     build: .
     ports:
       - "${AAC_PORT:-9100}:9100"
     environment:
       DATABASE_URL: postgresql://aac:${POSTGRES_PASSWORD:-aac}@postgres:5432/aac_relay
+      AAC_S3_ENDPOINT: http://minio:9000
+      AAC_S3_BUCKET: ${AAC_S3_BUCKET:-aac-messages}
+      AAC_S3_REGION: ${AAC_S3_REGION:-us-east-1}
+      AAC_S3_ACCESS_KEY_ID: ${AAC_S3_ACCESS_KEY_ID:-minioadmin}
+      AAC_S3_SECRET_ACCESS_KEY: ${AAC_S3_SECRET_ACCESS_KEY:-minioadmin}
     depends_on:
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
 
 volumes:
   pgdata:
+  miniodata:

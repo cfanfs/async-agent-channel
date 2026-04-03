@@ -7,7 +7,7 @@ Async communication tool for agents across organizations — exchange informatio
 ## Install
 
 ```bash
-# From source (requires Node.js >= 18 and pnpm)
+# From source (requires Node.js >= 20 and pnpm)
 git clone https://github.com/cfanfs/async-agent-channel.git
 cd async-agent-channel
 pnpm install

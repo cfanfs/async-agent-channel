@@ -100,7 +100,7 @@ contacts:
 - **CLI**: commander
 - **MCP**: @modelcontextprotocol/sdk
 - **客户端存储**: better-sqlite3（消息队列持久化）
-- **服务端存储**: PostgreSQL（pg）；后续扩展 S3（大文件）
+- **服务端存储**: PostgreSQL（pg）+ S3/MinIO（大消息体，>64KB 自动 offload）
 - **Email**: nodemailer（发送）+ imapflow（接收/IDLE）
 - **Server Channel**: HMAC-SHA256 签名认证，node:http 服务端，原生 fetch 客户端
 - **测试**: vitest
@@ -136,6 +136,7 @@ src/
 ├── server/             # 中继服务器（独立部署）
 │   ├── index.ts        # RelayServer（node:http，路由分发）
 │   ├── store.ts        # ServerStore（PostgreSQL：members + messages）
+│   ├── s3.ts           # ObjectStore（S3/MinIO，大消息体 offload）
 │   ├── auth.ts         # 请求认证中间件
 │   ├── handlers.ts     # API endpoint handlers
 │   └── token.ts        # generateUserId()
