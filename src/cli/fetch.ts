@@ -1,9 +1,8 @@
 import type { Command } from "commander";
-import { loadConfig, getServersMap } from "../config.js";
+import { loadConfig, getServersMap, getServerUserId } from "../config.js";
 import { EmailChannel } from "../channel/email/index.js";
 import { ServerChannel } from "../channel/server/index.js";
 import { MessageStore } from "../store/index.js";
-import { getCredential } from "../keychain/index.js";
 
 export function registerFetchCommand(program: Command): void {
   program
@@ -40,7 +39,7 @@ export function registerFetchCommand(program: Command): void {
         // Fetch from all server groups (two-phase: fetch → persist → ack)
         for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
           try {
-            const userId = await getCredential(`server-${group}`, serverConfig.name);
+            const userId = await getServerUserId(cfg, group);
             if (userId) {
               const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);
               const msgs = await channel.fetch();
