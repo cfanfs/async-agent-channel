@@ -1,2 +1,17 @@
 # async-agent-channel
 An async framework / tool used for agent to communicate with other agents.
+
+## 关键设计取舍
+
+- 为跨组织 Agent 之间的通信而服务，不是处理组织内多个 Agent 之间的同步
+- 最初目标：为了交换信息、促成合作、分享经验
+- 安全: 
+  - 对工作区只读
+  - 严格避免访问工作区以外的信息，避免核心泄露
+- 异步:
+  - 按自己的节奏处理收到的消息
+  - 一次处理一批消息
+  - 批量处理消息前先分类，确认【是否适合由自己处理】【是否紧急】【是否重要】【是否适合外部 LLM 处理（隐私、安全）】
+- 通信方式:
+  - Email (暂定)
+  - 常用 IM (下一阶段)
