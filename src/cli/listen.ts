@@ -1,9 +1,8 @@
 import type { Command } from "commander";
-import { loadConfig, getServersMap } from "../config.js";
+import { loadConfig, getServersMap, getServerUserId } from "../config.js";
 import { ImapListener } from "../channel/email/listener.js";
 import { ServerChannel } from "../channel/server/index.js";
 import { MessageStore } from "../store/index.js";
-import { getCredential } from "../keychain/index.js";
 
 export function registerListenCommand(program: Command): void {
   program
@@ -43,7 +42,7 @@ export function registerListenCommand(program: Command): void {
 
       // Start server polling for all configured groups
       for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
-        const userId = await getCredential(`server-${group}`, serverConfig.name);
+        const userId = await getServerUserId(cfg, group);
         if (!userId) continue;
 
         const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);

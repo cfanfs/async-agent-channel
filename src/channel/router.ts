@@ -2,8 +2,7 @@ import type { Channel } from "./types.js";
 import { EmailChannel } from "./email/index.js";
 import { ServerChannel } from "./server/index.js";
 import type { AacConfig, ContactInfo } from "../config.js";
-import { resolveContact, getContactChannel, parseServerRef, getServersMap, getServerConfig, migrateKeychainIfNeeded } from "../config.js";
-import { getCredential } from "../keychain/index.js";
+import { resolveContact, getContactChannel, parseServerRef, getServersMap, getServerConfig, getServerUserId } from "../config.js";
 
 export type ChannelType = "email" | "server";
 
@@ -50,10 +49,7 @@ async function resolveServerChannel(
 
   const { memberName, group } = parseServerRef(contact.server);
   const serverConfig = getServerConfig(cfg, group);
-
-  // Ensure legacy keychain entries are migrated before lookup
-  await migrateKeychainIfNeeded(serverConfig.name);
-  const userId = await getCredential(`server-${group}`, serverConfig.name);
+  const userId = await getServerUserId(cfg, group);
   if (!userId) {
     throw new Error(
       `Server user_id not found in keychain for group "${group}" (name: "${serverConfig.name}"). Run: aac config set-credential server --group ${group}`

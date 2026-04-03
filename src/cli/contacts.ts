@@ -1,6 +1,5 @@
 import type { Command } from "commander";
-import { loadConfig, saveConfig, resolveContact, parseServerRef, getServersMap, type ContactInfo } from "../config.js";
-import { getCredential } from "../keychain/index.js";
+import { loadConfig, saveConfig, resolveContact, parseServerRef, getServersMap, getServerUserId, type ContactInfo } from "../config.js";
 import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE } from "../channel/server/sign.js";
 
 function signedHeaders(method: string, path: string, body: string, userId: string) {
@@ -74,7 +73,7 @@ export function registerContactsCommand(program: Command): void {
         }
 
         // Remote validation: check if member exists on server
-        const userId = await getCredential(`server-${group}`, serverConfig.name);
+        const userId = await getServerUserId(cfg, group);
         if (userId) {
           try {
             const path = "/api/v1/members";

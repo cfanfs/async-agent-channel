@@ -142,6 +142,17 @@ export async function migrateKeychainIfNeeded(legacyName: string): Promise<void>
   await deleteCredential("server", legacyName).catch(() => {});
 }
 
+export async function getServerUserId(
+  cfg: AacConfig,
+  group: string
+): Promise<string | null> {
+  const serverConfig = getServerConfig(cfg, group);
+  await migrateKeychainIfNeeded(serverConfig.name);
+
+  const { getCredential } = await import("./keychain/index.js");
+  return getCredential(`server-${group}`, serverConfig.name);
+}
+
 const CONFIG_DIR = join(homedir(), ".config", "aac");
 const CONFIG_PATH = join(CONFIG_DIR, "config.yaml");
 

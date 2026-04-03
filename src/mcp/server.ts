@@ -3,14 +3,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig, saveConfig, configExists, resolveContact, parseServerRef, getServersMap, resolveGroup, type ContactInfo } from "../config.js";
+import { loadConfig, saveConfig, configExists, resolveContact, parseServerRef, getServersMap, resolveGroup, getServerUserId, type ContactInfo } from "../config.js";
 import { EmailChannel } from "../channel/email/index.js";
 import { ServerChannel } from "../channel/server/index.js";
 import { resolveChannelForContact, type ChannelType } from "../channel/router.js";
 import { MessageStore } from "../store/index.js";
 import { Workspace } from "../workspace/index.js";
 import { ImapListener } from "../channel/email/listener.js";
-import { getCredential } from "../keychain/index.js";
 import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE } from "../channel/server/sign.js";
 import type { Message } from "../message/types.js";
 
@@ -242,7 +241,7 @@ async function handleFetch() {
     // Two-phase: fetch → persist → ack (all server groups)
     for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
       try {
-        const userId = await getCredential(`server-${group}`, serverConfig.name);
+        const userId = await getServerUserId(cfg, group);
         if (userId) {
           const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);
           const msgs = await channel.fetch();
@@ -393,7 +392,7 @@ async function handleServerInvite(a: Record<string, unknown>) {
   }
   const serverConfig = getServersMap(cfg)[group]!;
 
-  const userId = await getCredential(`server-${group}`, serverConfig.name);
+  const userId = await getServerUserId(cfg, group);
   if (!userId) return text(`Server user_id not found in keychain for group "${group}".`);
 
   const path = "/api/v1/members/invite";
@@ -426,7 +425,7 @@ async function handleServerMembers(a: Record<string, unknown>) {
   }
   const serverConfig = getServersMap(cfg)[group]!;
 
-  const userId = await getCredential(`server-${group}`, serverConfig.name);
+  const userId = await getServerUserId(cfg, group);
   if (!userId) return text(`Server user_id not found in keychain for group "${group}".`);
 
   const path = "/api/v1/members";
@@ -502,7 +501,7 @@ async function startBackgroundListeners(): Promise<void> {
 
   // Server polling (two-phase: fetch → persist → ack) for all groups
   for (const [group, serverConfig] of Object.entries(getServersMap(cfg))) {
-    const userId = await getCredential(`server-${group}`, serverConfig.name);
+    const userId = await getServerUserId(cfg, group);
     if (!userId) continue;
 
     const channel = new ServerChannel(serverConfig.url, serverConfig.name, userId);

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { loadConfig, saveConfig, getServersMap, resolveGroup } from "../config.js";
+import { loadConfig, saveConfig, getServersMap, resolveGroup, getServerUserId } from "../config.js";
 import { setCredential, getCredential } from "../keychain/index.js";
 import { RelayServer } from "../server/index.js";
 import { generateUserId } from "../server/token.js";
@@ -165,7 +165,7 @@ export function registerServerCommand(program: Command): void {
       const group = resolveGroup(cfg, opts.group);
       const serverConfig = getServersMap(cfg)[group]!;
 
-      const userId = await getCredential(`server-${group}`, serverConfig.name);
+      const userId = await getServerUserId(cfg, group);
       if (!userId) {
         console.error(`Server user_id not found in keychain for group "${group}".`);
         process.exit(1);
@@ -203,7 +203,7 @@ export function registerServerCommand(program: Command): void {
       const group = resolveGroup(cfg, opts.group);
       const serverConfig = getServersMap(cfg)[group]!;
 
-      const userId = await getCredential(`server-${group}`, serverConfig.name);
+      const userId = await getServerUserId(cfg, group);
       if (!userId) {
         console.error(`Server user_id not found in keychain for group "${group}".`);
         process.exit(1);
