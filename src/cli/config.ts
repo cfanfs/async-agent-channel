@@ -10,6 +10,7 @@ import {
   resolveContact,
   getServersMap,
   resolveGroup,
+  getServerUserId,
 } from "../config.js";
 import { setCredential, getCredential } from "../keychain/index.js";
 import { Workspace } from "../workspace/index.js";
@@ -137,7 +138,9 @@ export function registerConfigCommand(program: Command): void {
       if (groups.length > 0) {
         console.log(`Servers:`);
         for (const [group, sc] of groups) {
-          console.log(`  ${group}: ${sc.url} (as ${sc.name})`);
+          const userId = await getServerUserId(cfg, group);
+          const status = userId ? "●●●● (user_id in keychain)" : "NOT SET";
+          console.log(`  ${group}: ${sc.url} (as ${sc.name}, user_id: ${status})`);
         }
       } else {
         console.log("Servers: not configured");
@@ -160,7 +163,7 @@ export function registerConfigCommand(program: Command): void {
 
   config
     .command("set-credential <type>")
-    .description("Store credential in system keychain (smtp, imap, or server)")
+    .description("Store credential in system keychain (SMTP password, IMAP password, or server user_id)")
     .option("--group <group>", "Server group (for type=server)")
     .action(async (type: string, opts: { group?: string }) => {
       if (type !== "smtp" && type !== "imap" && type !== "server") {
@@ -187,13 +190,21 @@ export function registerConfigCommand(program: Command): void {
 
       const rl = createInterface({ input: stdin, output: stdout });
       try {
-        const password = await rl.question(`${type.toUpperCase()} password for ${account}: `);
-        if (!password) {
+        const prompt =
+          type === "server"
+            ? `Server user_id for ${account}: `
+            : `${type.toUpperCase()} password for ${account}: `;
+        const credential = await rl.question(prompt);
+        if (!credential) {
           console.log("Aborted.");
           return;
         }
-        await setCredential(credentialKey, account, password);
-        console.log(`${type.toUpperCase()} credential saved to system keychain.`);
+        await setCredential(credentialKey, account, credential);
+        if (type === "server") {
+          console.log(`Server user_id saved to system keychain for group "${resolveGroup(cfg, opts.group)}".`);
+        } else {
+          console.log(`${type.toUpperCase()} password saved to system keychain.`);
+        }
       } finally {
         rl.close();
       }
