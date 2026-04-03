@@ -23,6 +23,13 @@ function signedHeaders(method: string, path: string, body: string, userId: strin
   };
 }
 
+async function getErrorMessage(res: Response): Promise<string> {
+  const data = await res.json().catch(() => ({}));
+  return typeof (data as { error?: unknown }).error === "string"
+    ? (data as { error: string }).error
+    : "";
+}
+
 export function createServer(): Server {
   const server = new Server(
     { name: "aac", version: "0.1.0" },
@@ -408,7 +415,8 @@ async function handleServerInvite(a: Record<string, unknown>) {
   });
 
   if (!res.ok) {
-    return text(`Invite failed: ${res.status}`);
+    const error = await getErrorMessage(res);
+    return text(`Invite failed: ${res.status}${error ? ` ${error}` : ""}`);
   }
 
   const data = await res.json() as { user_id: string };
@@ -436,7 +444,8 @@ async function handleServerMembers(a: Record<string, unknown>) {
   });
 
   if (!res.ok) {
-    return text(`Failed: ${res.status}`);
+    const error = await getErrorMessage(res);
+    return text(`Failed: ${res.status}${error ? ` ${error}` : ""}`);
   }
 
   const data = await res.json() as { members: Array<{ name: string }> };

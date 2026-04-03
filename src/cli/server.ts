@@ -17,6 +17,13 @@ function signedHeaders(method: string, path: string, body: string, userId: strin
   };
 }
 
+async function getErrorMessage(res: Response): Promise<string> {
+  const data = await res.json().catch(() => ({}));
+  return typeof (data as { error?: unknown }).error === "string"
+    ? (data as { error: string }).error
+    : "";
+}
+
 export function registerServerCommand(program: Command): void {
   const server = program.command("server").description("Manage relay server");
 
@@ -184,8 +191,8 @@ export function registerServerCommand(program: Command): void {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        console.error(`Invite failed: ${res.status} ${(data as any).error ?? ""}`);
+        const error = await getErrorMessage(res);
+        console.error(`Invite failed: ${res.status}${error ? ` ${error}` : ""}`);
         process.exit(1);
       }
 
@@ -217,7 +224,8 @@ export function registerServerCommand(program: Command): void {
       });
 
       if (!res.ok) {
-        console.error(`Failed: ${res.status}`);
+        const error = await getErrorMessage(res);
+        console.error(`Failed: ${res.status}${error ? ` ${error}` : ""}`);
         process.exit(1);
       }
 
