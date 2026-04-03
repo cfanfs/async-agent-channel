@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: aac_relay
+      POSTGRES_USER: aac
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aac}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aac -d aac_relay"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  relay:
+    build: .
+    ports:
+      - "${AAC_PORT:-9100}:9100"
+    environment:
+      DATABASE_URL: postgresql://aac:${POSTGRES_PASSWORD:-aac}@postgres:5432/aac_relay
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

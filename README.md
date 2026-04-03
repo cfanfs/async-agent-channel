@@ -15,15 +15,41 @@ pnpm build
 npm link
 ```
 
-## Setup
+## Deploy Relay Server (Docker)
+
+```bash
+# Copy and edit environment config
+cp .env.example .env
+# Set AAC_HOST to your server's public address, e.g.:
+#   AAC_HOST=http://192.168.1.100:9100
+#   AAC_HOST=https://relay.example.com
+
+# Start PostgreSQL + relay server
+docker compose up -d
+
+# Initialize database and create the first user (save the user_id!)
+docker compose exec relay node dist/cli/index.js server init \
+  --db "postgresql://aac:${POSTGRES_PASSWORD:-aac}@postgres:5432/aac_relay"
+```
+
+## Client Setup
 
 ```bash
 # Interactive configuration (email credentials stored in system keychain)
 aac config init
 
-# Add contacts
-aac contacts add alice alice@example.com
+# Join the relay server (paste the user_id from the init step)
+aac server join $AAC_HOST --name <your-name>
+
+# Invite another member
+aac server invite
+# Share the user_id — they run:
+#   aac server join $AAC_HOST --name <their-name>
+
+# Add contacts (server channel, email, or both)
+aac contacts add alice --server alice
 aac contacts add bob bob@example.com
+aac contacts add carol carol@example.com --server carol
 
 # Verify
 aac config show
@@ -36,8 +62,9 @@ Gmail users: use an [App Password](https://myaccount.google.com/apppasswords), n
 ### Send messages
 
 ```bash
-aac send --to alice "hello from aac"
-aac send --to alice --subject "meeting notes" "see attached"
+aac send --to alice "hello from aac"          # auto-routes (server preferred)
+aac send --to alice --via server "hi"          # force server channel
+aac send --to bob --via email "hi"             # force email channel
 aac send --to alice --file ~/aac-workspace/shared/notes.md
 ```
 
