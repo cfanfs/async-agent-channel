@@ -1,0 +1,28 @@
+identity:
+  name: your-name
+  email: you@example.com
+
+# Security: bidirectional workspace isolation
+# - outbound: only content in these directories can be referenced in sent messages
+# - inbound: received messages are written only here
+workspace:
+  outbound:
+    - ~/aac-workspace/shared
+    # - ~/projects/public-docs    # add more as needed
+  inbound: ~/aac-workspace/received
+
+email:
+  smtp:
+    host: smtp.gmail.com
+    port: 587
+    user: you@gmail.com
+    # password stored in system keychain (run: aac config set-credential smtp)
+  imap:
+    host: imap.gmail.com
+    port: 993
+    user: you@gmail.com
+    # password stored in system keychain (run: aac config set-credential imap)
+
+contacts:
+  alice: alice@example.com
+  bob: bob@example.com

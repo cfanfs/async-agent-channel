@@ -1,0 +1,40 @@
+{
+  "name": "@cfanfs/aac",
+  "version": "0.1.0",
+  "description": "Async agent communication tool for cross-organization agent messaging",
+  "type": "module",
+  "main": "dist/cli/index.js",
+  "bin": {
+    "aac": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^12.8.0",
+    "commander": "^13.0.0",
+    "imapflow": "^1.0.0",
+    "nodemailer": "^6.9.0",
+    "yaml": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  }
+}
