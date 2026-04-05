@@ -184,6 +184,7 @@ describe.skipIf(!pgAvailable)("relay server", () => {
       expect(data.messages[0].from).toBe("admin");
       expect(data.messages[0].subject).toBe("hello");
       expect(data.messages[0].body).toBe("hi bob");
+      expect(typeof data.messages[0].timestamp).toBe("number");
     });
 
     it("bob fetches again — same messages (not yet acked)", async () => {
