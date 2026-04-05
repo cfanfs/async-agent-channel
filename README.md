@@ -85,6 +85,13 @@ aac inbox ack <id>     # Mark as processed; relay messages are acked here
 
 For relay server messages, `fetch`/`listen` only persist them locally. The message stays pending on the relay until you run `aac inbox ack <id>`.
 
+### Update aac
+
+```bash
+aac update             # Update based on the current installation method
+aac update --dry-run   # Print the detected update plan
+```
+
 ### Long-running listener
 
 ```bash

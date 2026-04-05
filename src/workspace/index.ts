@@ -19,6 +19,10 @@ function isUnderDir(filePath: string, dir: string): boolean {
   return filePath.startsWith(dir + "/") || filePath === dir;
 }
 
+function formatRoots(roots: string[]): string {
+  return roots.map((root) => `- ${root}`).join("\n");
+}
+
 export class Workspace {
   readonly outbound: string[];
   readonly inbound: string;
@@ -60,7 +64,7 @@ export class Workspace {
     const abs = expandPath(filePath);
     if (!this.isOutboundPath(abs)) {
       throw new Error(
-        `Security: path "${filePath}" is outside all outbound workspaces`
+        `Security: path "${filePath}" resolves to "${abs}" and is outside all outbound workspaces:\n${formatRoots(this.outbound)}`
       );
     }
     return abs;
@@ -74,7 +78,7 @@ export class Workspace {
     const abs = expandPath(filePath);
     if (!this.isInboundPath(abs)) {
       throw new Error(
-        `Security: path "${filePath}" is outside inbound workspace "${this.inbound}"`
+        `Security: path "${filePath}" resolves to "${abs}" and is outside the inbound workspace:\n- ${this.inbound}`
       );
     }
     return abs;

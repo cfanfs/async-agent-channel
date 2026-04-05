@@ -83,6 +83,13 @@ aac inbox ack <id>     # 标记已处理；server 消息会在这里 ack relay
 
 对于 relay server 消息，`fetch` / `listen` 现在只负责落到本地；只有执行 `aac inbox ack <id>` 后，消息才会从 relay 上被真正确认消费。
 
+### 更新 aac
+
+```bash
+aac update             # 按当前安装方式更新自己
+aac update --dry-run   # 只打印检测到的更新计划
+```
+
 ### 长驻监听
 
 ```bash

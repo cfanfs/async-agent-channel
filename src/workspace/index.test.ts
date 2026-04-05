@@ -45,7 +45,9 @@ describe("Workspace", () => {
     it("rejects paths outside outbound directories", () => {
       const path = join(tmpDir, "secret.txt");
       expect(ws.isOutboundPath(path)).toBe(false);
-      expect(() => ws.assertOutbound(path)).toThrow("Security");
+      expect(() => ws.assertOutbound(path)).toThrow(path);
+      expect(() => ws.assertOutbound(path)).toThrow(outbound1);
+      expect(() => ws.assertOutbound(path)).toThrow(outbound2);
     });
 
     it("accepts paths within inbound directory", () => {
@@ -57,7 +59,8 @@ describe("Workspace", () => {
     it("rejects paths outside inbound directory", () => {
       const path = join(tmpDir, "elsewhere.txt");
       expect(ws.isInboundPath(path)).toBe(false);
-      expect(() => ws.assertInbound(path)).toThrow("Security");
+      expect(() => ws.assertInbound(path)).toThrow(path);
+      expect(() => ws.assertInbound(path)).toThrow(inbound);
     });
 
     it("prevents path traversal", () => {
