@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import type { Command } from "commander";
 import { loadConfig } from "../config.js";
 import { resolveChannelForContact, type ChannelType } from "../channel/router.js";
+import type { OutboundAttachment } from "../message/payload.js";
+import { encodeMessagePayload } from "../message/payload.js";
 import { Workspace } from "../workspace/index.js";
 
 export function registerSendCommand(program: Command): void {
@@ -11,25 +14,33 @@ export function registerSendCommand(program: Command): void {
     .requiredOption("--to <contact>", "recipient contact name")
     .option("--subject <subject>", "message subject")
     .option("--via <channel>", "force channel: email or server")
-    .option("--file <path>", "attach file content (must be in outbound workspace)")
+    .option(
+      "--file <path>",
+      "attach file content (must be in outbound workspace)",
+      collectOption,
+      [] as string[]
+    )
     .argument("[message]", "message body")
     .action(
       async (
         message: string | undefined,
-        opts: { to: string; subject?: string; via?: string; file?: string }
+        opts: { to: string; subject?: string; via?: string; file?: string[] }
       ) => {
         const cfg = loadConfig();
 
         let body = message ?? "";
+        const ws = new Workspace(cfg.workspace);
+        const attachments: OutboundAttachment[] = [];
 
-        if (opts.file) {
-          const ws = new Workspace(cfg.workspace);
-          const abs = ws.assertOutbound(opts.file);
-          const fileContent = readFileSync(abs, "utf-8");
-          body = body ? `${body}\n\n---\n${fileContent}` : fileContent;
+        for (const filePath of opts.file ?? []) {
+          const abs = ws.assertOutbound(filePath);
+          attachments.push({
+            name: basename(abs),
+            content: readFileSync(abs),
+          });
         }
 
-        if (!body) {
+        if (!body && attachments.length === 0) {
           console.error("Provide a message or --file.");
           process.exit(1);
         }
@@ -44,8 +55,13 @@ export function registerSendCommand(program: Command): void {
           via
         );
 
-        await channel.send(address, subject, body);
+        await channel.send(address, subject, encodeMessagePayload(body, attachments));
         console.log(`Sent to ${opts.to} (${address}) via ${type}`);
       }
     );
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
 }

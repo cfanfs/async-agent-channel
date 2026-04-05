@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { loadConfig, getServersMap, getServerUserId } from "../config.js";
 import { EmailChannel } from "../channel/email/index.js";
 import { ServerChannel } from "../channel/server/index.js";
+import { materializeIncomingMessage } from "../inbox/materialize.js";
 import { MessageStore } from "../store/index.js";
 
 export function registerFetchCommand(program: Command): void {
@@ -27,7 +28,7 @@ export function registerFetchCommand(program: Command): void {
             totalFetched += msgs.length;
             for (const msg of msgs) {
               try {
-                if (store.insert(msg)) newCount++;
+                if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
               } catch (err) {
                 console.error(`Email persist failed for ${msg.id}: ${(err as Error).message}`);
               }
@@ -55,7 +56,7 @@ export function registerFetchCommand(program: Command): void {
                 msg.channel = "server";
                 msg.serverGroup = group;
                 try {
-                  if (store.insert(msg)) newCount++;
+                  if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
                 } catch (err) {
                   console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
                 }

@@ -11,6 +11,7 @@ import { MessageStore } from "../store/index.js";
 import { Workspace } from "../workspace/index.js";
 import { ImapListener } from "../channel/email/listener.js";
 import { acknowledgeStoredMessage } from "../inbox/ack.js";
+import { materializeIncomingMessage } from "../inbox/materialize.js";
 import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE } from "../channel/server/sign.js";
 import type { Message } from "../message/types.js";
 
@@ -240,7 +241,7 @@ async function handleFetch() {
         totalFetched += msgs.length;
         for (const msg of msgs) {
           try {
-            if (store.insert(msg)) newCount++;
+            if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
           } catch (err) {
             console.error(`Email persist failed for ${msg.id}: ${(err as Error).message}`);
           }
@@ -263,7 +264,7 @@ async function handleFetch() {
             msg.channel = "server";
             msg.serverGroup = group;
             try {
-              if (store.insert(msg)) newCount++;
+              if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
             } catch (err) {
               console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
             }
@@ -309,8 +310,12 @@ function handleInboxRead(a: Record<string, unknown>) {
       store.updateStatus(id, "read");
     }
 
+    const attachments = (msg.attachments ?? []).length === 0
+      ? ""
+      : `\nAttachments:\n${msg.attachments!.map((attachment) => `- ${attachment.name}: ${attachment.path}`).join("\n")}`;
+
     return text(
-      `From:    ${msg.from}\nTo:      ${msg.to}\nSubject: ${msg.subject}\nDate:    ${msg.timestamp.toISOString()}\nStatus:  ${msg.status}\n---\n${msg.body}`
+      `From:    ${msg.from}\nTo:      ${msg.to}\nSubject: ${msg.subject}\nDate:    ${msg.timestamp.toISOString()}\nStatus:  ${msg.status}${attachments}\n---\n${msg.body}`
     );
   } finally {
     store.close();
@@ -502,7 +507,7 @@ async function startBackgroundListeners(): Promise<void> {
     let newCount = 0;
     for (const msg of messages) {
       try {
-        if (store.insert(msg)) newCount++;
+        if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
       } catch (err) {
         console.error(`${source}: persist failed for ${msg.id}: ${(err as Error).message}`);
       }
@@ -541,7 +546,7 @@ async function startBackgroundListeners(): Promise<void> {
               msg.channel = "server";
               msg.serverGroup = group;
               try {
-                if (store.insert(msg)) newCount++;
+                if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
               } catch (err) {
                 console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
               }

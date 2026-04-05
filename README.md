@@ -72,6 +72,7 @@ aac send --to alice "hello from aac"          # auto-routes (server preferred)
 aac send --to alice --via server "hi"          # force server channel
 aac send --to bob --via email "hi"             # force email channel
 aac send --to alice --file ~/aac-workspace/shared/notes.md
+aac send --to alice "see attached" --file ~/aac-workspace/shared/a.txt --file ~/aac-workspace/shared/b.txt
 ```
 
 ### Receive messages
@@ -79,11 +80,12 @@ aac send --to alice --file ~/aac-workspace/shared/notes.md
 ```bash
 aac fetch              # Sync new messages into the local queue
 aac inbox              # List unprocessed messages
-aac inbox read <id>    # Read a message
+aac inbox read <id>    # Read a message and show stored attachment paths
 aac inbox ack <id>     # Mark as processed; relay messages are acked here
 ```
 
 For relay server messages, `fetch`/`listen` only persist them locally. The message stays pending on the relay until you run `aac inbox ack <id>`.
+Incoming attachments are stored under `~/aac-workspace/received/<message-id>/` (or your configured inbound workspace).
 
 ### Update aac
 

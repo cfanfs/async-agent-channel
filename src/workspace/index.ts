@@ -1,6 +1,7 @@
 import { resolve, relative } from "node:path";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { sanitizeAttachmentName } from "../message/payload.js";
 
 export interface WorkspaceConfig {
   outbound: string[];
@@ -106,6 +107,18 @@ export class Workspace {
       mkdirSync(dir, { recursive: true });
     }
     writeFileSync(abs, content, "utf-8");
+  }
+
+  /** Write an attachment into the per-message inbound directory and return its absolute path. */
+  writeInboundAttachment(messageId: string, fileName: string, content: Buffer): string {
+    const safeName = sanitizeAttachmentName(fileName);
+    const abs = this.assertInbound(resolve(this.inbound, messageId, safeName));
+    const dir = resolve(abs, "..");
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    writeFileSync(abs, content);
+    return abs;
   }
 }
 

@@ -109,4 +109,20 @@ describe("MessageStore", () => {
     expect(retrieved!.channel).toBe("server");
     expect(retrieved!.serverGroup).toBe("default");
   });
+
+  it("persists attachment metadata", () => {
+    store.insert(
+      makeMessage({
+        id: "msg-attach",
+        attachments: [
+          { name: "notes.md", path: "/tmp/received/msg-attach/notes.md" },
+        ],
+      })
+    );
+
+    const retrieved = store.get("msg-attach");
+    expect(retrieved!.attachments).toEqual([
+      { name: "notes.md", path: "/tmp/received/msg-attach/notes.md" },
+    ]);
+  });
 });

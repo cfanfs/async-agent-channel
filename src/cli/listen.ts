@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { loadConfig, getServersMap, getServerUserId } from "../config.js";
 import { ImapListener } from "../channel/email/listener.js";
 import { ServerChannel } from "../channel/server/index.js";
+import { materializeIncomingMessage } from "../inbox/materialize.js";
 import { MessageStore } from "../store/index.js";
 
 export function registerListenCommand(program: Command): void {
@@ -18,7 +19,7 @@ export function registerListenCommand(program: Command): void {
         let newCount = 0;
         for (const msg of messages) {
           try {
-            if (store.insert(msg)) newCount++;
+            if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
           } catch (err) {
             console.error(`${source}: persist failed for ${msg.id}: ${(err as Error).message}`);
           }
@@ -64,7 +65,7 @@ export function registerListenCommand(program: Command): void {
                   msg.channel = "server";
                   msg.serverGroup = group;
                   try {
-                    if (store.insert(msg)) newCount++;
+                    if (store.insert(materializeIncomingMessage(msg, cfg.workspace))) newCount++;
                   } catch (err) {
                     console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
                   }

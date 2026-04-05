@@ -46,6 +46,12 @@ export function registerInboxCommand(program: Command): void {
         console.log(`Subject: ${msg.subject}`);
         console.log(`Date:    ${msg.timestamp.toISOString()}`);
         console.log(`Status:  ${msg.status}`);
+        if ((msg.attachments ?? []).length > 0) {
+          console.log("Attachments:");
+          for (const attachment of msg.attachments ?? []) {
+            console.log(`- ${attachment.name}: ${attachment.path}`);
+          }
+        }
         console.log(`---`);
         console.log(msg.body);
 
