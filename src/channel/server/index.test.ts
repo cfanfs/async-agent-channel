@@ -79,6 +79,26 @@ describe("ServerChannel", () => {
       expect(msgs[0].timestamp.getTime()).toBe(now);
     });
 
+    it("accepts numeric timestamps serialized as strings", async () => {
+      const now = Date.now();
+      globalThis.fetch = vi.fn(async () => {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              { id: "m1", from: "bob", to: "alice", subject: "hi", body: "hello", timestamp: String(now) },
+            ],
+          }),
+          { status: 200 }
+        );
+      }) as any;
+
+      const ch = new ServerChannel(TEST_SERVER, "alice", TEST_USER_ID);
+      const msgs = await ch.fetch();
+
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].timestamp.getTime()).toBe(now);
+    });
+
     it("returns empty array when no messages", async () => {
       globalThis.fetch = vi.fn(async () => {
         return new Response(JSON.stringify({ messages: [] }), { status: 200 });
@@ -96,6 +116,22 @@ describe("ServerChannel", () => {
 
       const ch = new ServerChannel(TEST_SERVER, "alice", TEST_USER_ID);
       await expect(ch.fetch()).rejects.toThrow("Server fetch failed: 401");
+    });
+
+    it("throws on invalid timestamps", async () => {
+      globalThis.fetch = vi.fn(async () => {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              { id: "m1", from: "bob", to: "alice", subject: "hi", body: "hello", timestamp: "not-a-number" },
+            ],
+          }),
+          { status: 200 }
+        );
+      }) as any;
+
+      const ch = new ServerChannel(TEST_SERVER, "alice", TEST_USER_ID);
+      await expect(ch.fetch()).rejects.toThrow("Invalid server message timestamp");
     });
   });
 });

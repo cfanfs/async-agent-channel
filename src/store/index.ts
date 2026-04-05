@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import type {
   Message,
+  MessageChannel,
   MessageSummary,
   MessageStatus,
 } from "../message/types.js";
@@ -31,13 +32,27 @@ export class MessageStore {
         subject   TEXT NOT NULL DEFAULT '',
         body      TEXT NOT NULL DEFAULT '',
         timestamp INTEGER NOT NULL,
-        status    TEXT NOT NULL DEFAULT 'unread'
+        status    TEXT NOT NULL DEFAULT 'unread',
+        channel   TEXT,
+        server_group TEXT
       )
     `);
+
+    const columns = this.db
+      .prepare(`PRAGMA table_info(messages)`)
+      .all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+
+    if (!names.has("channel")) {
+      this.db.exec(`ALTER TABLE messages ADD COLUMN channel TEXT`);
+    }
+    if (!names.has("server_group")) {
+      this.db.exec(`ALTER TABLE messages ADD COLUMN server_group TEXT`);
+    }
   }
 
   list(from?: string): MessageSummary[] {
-    const base = `SELECT id, "from", subject, timestamp, status FROM messages WHERE status != 'acked'`;
+    const base = `SELECT id, "from", subject, timestamp, status, channel, server_group FROM messages WHERE status != 'acked'`;
     const stmt = from
       ? this.db.prepare(`${base} AND "from" = ? ORDER BY timestamp DESC`)
       : this.db.prepare(`${base} ORDER BY timestamp DESC`);
@@ -48,6 +63,8 @@ export class MessageStore {
       subject: string;
       timestamp: number;
       status: MessageStatus;
+      channel: MessageChannel | null;
+      server_group: string | null;
     }>;
 
     return rows.map((r) => ({
@@ -56,13 +73,15 @@ export class MessageStore {
       subject: r.subject,
       timestamp: new Date(r.timestamp),
       status: r.status,
+      channel: r.channel ?? undefined,
+      serverGroup: r.server_group,
     }));
   }
 
   get(id: string): Message | undefined {
     const row = this.db
       .prepare(
-        `SELECT id, "from", "to", subject, body, timestamp, status FROM messages WHERE id = ?`
+        `SELECT id, "from", "to", subject, body, timestamp, status, channel, server_group FROM messages WHERE id = ?`
       )
       .get(id) as
       | {
@@ -73,32 +92,51 @@ export class MessageStore {
           body: string;
           timestamp: number;
           status: MessageStatus;
+          channel: MessageChannel | null;
+          server_group: string | null;
         }
       | undefined;
 
     if (!row) return undefined;
     return {
-      ...row,
+      id: row.id,
+      from: row.from,
+      to: row.to,
+      subject: row.subject,
+      body: row.body,
       timestamp: new Date(row.timestamp),
+      status: row.status,
+      channel: row.channel ?? undefined,
+      serverGroup: row.server_group,
     };
   }
 
   /** Insert a message. Skips if id already exists. Returns true if inserted. */
   insert(message: Message): boolean {
     const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO messages (id, "from", "to", subject, body, timestamp, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, "from", "to", subject, body, timestamp, status, channel, server_group)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(
-      message.id,
-      message.from,
-      message.to,
-      message.subject,
-      message.body,
-      message.timestamp.getTime(),
-      message.status
-    );
-    return result.changes > 0;
+    try {
+      const result = stmt.run(
+        message.id,
+        message.from,
+        message.to,
+        message.subject,
+        message.body,
+        message.timestamp.getTime(),
+        message.status,
+        message.channel ?? null,
+        message.serverGroup ?? null
+      );
+      return result.changes > 0;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "SQLITE_CONSTRAINT_PRIMARYKEY" || code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return false;
+      }
+      throw err;
+    }
   }
 
   updateStatus(id: string, status: MessageStatus): boolean {

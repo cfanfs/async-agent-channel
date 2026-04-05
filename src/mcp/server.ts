@@ -10,6 +10,7 @@ import { resolveChannelForContact, type ChannelType } from "../channel/router.js
 import { MessageStore } from "../store/index.js";
 import { Workspace } from "../workspace/index.js";
 import { ImapListener } from "../channel/email/listener.js";
+import { acknowledgeStoredMessage } from "../inbox/ack.js";
 import { signRequest, HEADER_KEY_ID, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE } from "../channel/server/sign.js";
 import type { Message } from "../message/types.js";
 
@@ -182,7 +183,7 @@ export function createServer(): Server {
       case "inbox_read":
         return handleInboxRead(a);
       case "inbox_ack":
-        return handleInboxAck(a);
+        return await handleInboxAck(a);
       case "contacts_list":
         return handleContactsList(a);
       case "contacts_add":
@@ -238,7 +239,11 @@ async function handleFetch() {
         const msgs = await channel.fetch();
         totalFetched += msgs.length;
         for (const msg of msgs) {
-          if (store.insert(msg)) newCount++;
+          try {
+            if (store.insert(msg)) newCount++;
+          } catch (err) {
+            console.error(`Email persist failed for ${msg.id}: ${(err as Error).message}`);
+          }
         }
       } catch (err) {
         console.error(`Email fetch error: ${(err as Error).message}`);
@@ -255,8 +260,13 @@ async function handleFetch() {
           totalFetched += msgs.length;
           for (const msg of msgs) {
             msg.from = `${msg.from}@${group}`;
-            if (store.insert(msg)) newCount++;
-            try { await channel.ack(msg.id); } catch { /* non-fatal */ }
+            msg.channel = "server";
+            msg.serverGroup = group;
+            try {
+              if (store.insert(msg)) newCount++;
+            } catch (err) {
+              console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
+            }
           }
         }
       } catch (err) {
@@ -307,14 +317,16 @@ function handleInboxRead(a: Record<string, unknown>) {
   }
 }
 
-function handleInboxAck(a: Record<string, unknown>) {
+async function handleInboxAck(a: Record<string, unknown>) {
   const id = a.id as string;
   const store = new MessageStore();
   try {
-    if (!store.updateStatus(id, "acked")) {
+    if (!(await acknowledgeStoredMessage(store, id))) {
       return text(`Message "${id}" not found.`);
     }
     return text(`Message "${id}" acknowledged.`);
+  } catch (err) {
+    return text(`Failed to acknowledge "${id}": ${(err as Error).message}`);
   } finally {
     store.close();
   }
@@ -489,7 +501,11 @@ async function startBackgroundListeners(): Promise<void> {
   const onMessages = (source: string) => (messages: Message[]) => {
     let newCount = 0;
     for (const msg of messages) {
-      if (store.insert(msg)) newCount++;
+      try {
+        if (store.insert(msg)) newCount++;
+      } catch (err) {
+        console.error(`${source}: persist failed for ${msg.id}: ${(err as Error).message}`);
+      }
     }
     if (newCount > 0) {
       console.error(`aac: ${newCount} new message(s) from ${source}`);
@@ -522,8 +538,13 @@ async function startBackgroundListeners(): Promise<void> {
             let newCount = 0;
             for (const msg of msgs) {
               msg.from = `${msg.from}@${group}`;
-              if (store.insert(msg)) newCount++;
-              try { await channel.ack(msg.id); } catch { /* retry next poll */ }
+              msg.channel = "server";
+              msg.serverGroup = group;
+              try {
+                if (store.insert(msg)) newCount++;
+              } catch (err) {
+                console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
+              }
             }
             if (newCount > 0) {
               console.error(`aac: ${newCount} new message(s) from server [${group}]`);

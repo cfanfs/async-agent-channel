@@ -94,4 +94,19 @@ describe("MessageStore", () => {
     const retrieved = store.get("msg-ts");
     expect(retrieved!.timestamp.getTime()).toBe(ts.getTime());
   });
+
+  it("persists channel metadata", () => {
+    store.insert(
+      makeMessage({
+        id: "msg-server",
+        from: "alice@default",
+        channel: "server",
+        serverGroup: "default",
+      })
+    );
+
+    const retrieved = store.get("msg-server");
+    expect(retrieved!.channel).toBe("server");
+    expect(retrieved!.serverGroup).toBe("default");
+  });
 });

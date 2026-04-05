@@ -175,7 +175,7 @@ export async function handleFetchMessages(
       to: m.to_name,
       subject: m.subject,
       body: m.body,
-      timestamp: m.timestamp,
+      timestamp: Number(m.timestamp),
     })),
   });
 }

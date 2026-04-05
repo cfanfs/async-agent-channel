@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { acknowledgeStoredMessage } from "../inbox/ack.js";
 import { MessageStore } from "../store/index.js";
 
 export function registerInboxCommand(program: Command): void {
@@ -62,11 +63,14 @@ export function registerInboxCommand(program: Command): void {
     .action(async (id: string) => {
       const store = new MessageStore();
       try {
-        if (!store.updateStatus(id, "acked")) {
+        if (!(await acknowledgeStoredMessage(store, id))) {
           console.error(`Message "${id}" not found.`);
           process.exit(1);
         }
         console.log(`Message "${id}" acknowledged.`);
+      } catch (err) {
+        console.error(`Failed to acknowledge "${id}": ${(err as Error).message}`);
+        process.exit(1);
       } finally {
         store.close();
       }

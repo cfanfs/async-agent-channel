@@ -37,7 +37,7 @@ aac listen [--poll-interval 30]          # 长驻监听（IMAP IDLE + Server 轮
 aac inbox                                # 列出未处理消息
 aac inbox --from <contact>               # 按发件人过滤
 aac inbox read <id>                      # 读取具体消息
-aac inbox ack <id>                       # 标记已处理
+aac inbox ack <id>                       # 标记已处理；server 消息会在这里 ack relay
 
 # 联系人
 aac contacts list                        # 查看联系人

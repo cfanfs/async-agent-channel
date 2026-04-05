@@ -113,6 +113,8 @@ export class ImapListener {
           body,
           timestamp: envelope.date ?? new Date(),
           status: "unread",
+          channel: "email",
+          serverGroup: null,
         });
       }
 

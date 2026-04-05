@@ -26,7 +26,11 @@ export function registerFetchCommand(program: Command): void {
             const msgs = await channel.fetch();
             totalFetched += msgs.length;
             for (const msg of msgs) {
-              if (store.insert(msg)) newCount++;
+              try {
+                if (store.insert(msg)) newCount++;
+              } catch (err) {
+                console.error(`Email persist failed for ${msg.id}: ${(err as Error).message}`);
+              }
             }
             if (msgs.length > 0) {
               console.log(`Email: fetched ${msgs.length} message(s)`);
@@ -45,14 +49,15 @@ export function registerFetchCommand(program: Command): void {
               const msgs = await channel.fetch();
               totalFetched += msgs.length;
 
-              // Persist locally, then ack each persisted message
+              // Persist locally; relay messages remain pending until inbox ack
               for (const msg of msgs) {
                 msg.from = `${msg.from}@${group}`;
-                if (store.insert(msg)) newCount++;
+                msg.channel = "server";
+                msg.serverGroup = group;
                 try {
-                  await channel.ack(msg.id);
+                  if (store.insert(msg)) newCount++;
                 } catch (err) {
-                  console.error(`Server [${group}] ack failed for ${msg.id}: ${(err as Error).message}`);
+                  console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
                 }
               }
 

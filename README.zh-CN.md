@@ -75,11 +75,13 @@ aac send --to alice --file ~/aac-workspace/shared/notes.md
 ### 接收消息
 
 ```bash
-aac fetch              # 拉取未读邮件到本地队列
+aac fetch              # 把新消息同步到本地队列
 aac inbox              # 列出未处理消息
 aac inbox read <id>    # 读取消息
-aac inbox ack <id>     # 标记已处理
+aac inbox ack <id>     # 标记已处理；server 消息会在这里 ack relay
 ```
+
+对于 relay server 消息，`fetch` / `listen` 现在只负责落到本地；只有执行 `aac inbox ack <id>` 后，消息才会从 relay 上被真正确认消费。
 
 ### 长驻监听
 

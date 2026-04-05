@@ -18,6 +18,19 @@ function signedHeaders(method: string, path: string, body: string, userId: strin
   };
 }
 
+function parseServerTimestamp(raw: number | string): Date {
+  const millis = typeof raw === "string" ? Number(raw) : raw;
+  if (!Number.isFinite(millis)) {
+    throw new Error(`Invalid server message timestamp: ${String(raw)}`);
+  }
+
+  const date = new Date(millis);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid server message timestamp: ${String(raw)}`);
+  }
+  return date;
+}
+
 export class ServerChannel implements Channel {
   constructor(
     private serverUrl: string,
@@ -64,7 +77,7 @@ export class ServerChannel implements Channel {
         to: string;
         subject: string;
         body: string;
-        timestamp: number;
+        timestamp: number | string;
       }>;
     };
 
@@ -74,7 +87,7 @@ export class ServerChannel implements Channel {
       to: m.to,
       subject: m.subject,
       body: m.body,
-      timestamp: new Date(m.timestamp),
+      timestamp: parseServerTimestamp(m.timestamp),
       status: "unread" as const,
     }));
   }

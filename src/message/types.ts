@@ -1,4 +1,5 @@
 export type MessageStatus = "unread" | "read" | "acked" | "snoozed";
+export type MessageChannel = "email" | "server";
 
 export interface Message {
   id: string;
@@ -8,6 +9,8 @@ export interface Message {
   body: string;
   timestamp: Date;
   status: MessageStatus;
+  channel?: MessageChannel;
+  serverGroup?: string | null;
 }
 
 export interface MessageSummary {
@@ -16,4 +19,6 @@ export interface MessageSummary {
   subject: string;
   timestamp: Date;
   status: MessageStatus;
+  channel?: MessageChannel;
+  serverGroup?: string | null;
 }

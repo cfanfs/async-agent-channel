@@ -17,7 +17,11 @@ export function registerListenCommand(program: Command): void {
       const insertMessages = (source: string) => (messages: import("../message/types.js").Message[]) => {
         let newCount = 0;
         for (const msg of messages) {
-          if (store.insert(msg)) newCount++;
+          try {
+            if (store.insert(msg)) newCount++;
+          } catch (err) {
+            console.error(`${source}: persist failed for ${msg.id}: ${(err as Error).message}`);
+          }
         }
         if (newCount > 0) {
           console.log(
@@ -57,8 +61,13 @@ export function registerListenCommand(program: Command): void {
                 let newCount = 0;
                 for (const msg of msgs) {
                   msg.from = `${msg.from}@${group}`;
-                  if (store.insert(msg)) newCount++;
-                  try { await channel.ack(msg.id); } catch { /* retry on next poll */ }
+                  msg.channel = "server";
+                  msg.serverGroup = group;
+                  try {
+                    if (store.insert(msg)) newCount++;
+                  } catch (err) {
+                    console.error(`Server [${group}] persist failed for ${msg.id}: ${(err as Error).message}`);
+                  }
                 }
                 if (newCount > 0) {
                   console.log(

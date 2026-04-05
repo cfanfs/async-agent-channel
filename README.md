@@ -77,11 +77,13 @@ aac send --to alice --file ~/aac-workspace/shared/notes.md
 ### Receive messages
 
 ```bash
-aac fetch              # Pull unread emails into local queue
+aac fetch              # Sync new messages into the local queue
 aac inbox              # List unprocessed messages
 aac inbox read <id>    # Read a message
-aac inbox ack <id>     # Mark as processed
+aac inbox ack <id>     # Mark as processed; relay messages are acked here
 ```
+
+For relay server messages, `fetch`/`listen` only persist them locally. The message stays pending on the relay until you run `aac inbox ack <id>`.
 
 ### Long-running listener
 
