@@ -108,6 +108,44 @@ aac mcp                # Start stdio MCP server
 
 Add to your agent's MCP config to use `send`, `fetch`, `inbox_list`, `inbox_read`, `inbox_ack`, `outbound_list`, `outbound_read` as native tools. The MCP server automatically maintains an IMAP IDLE connection for real-time message reception.
 
+### MCP Client Helpers
+
+Use the built-in helpers to generate client registration commands from your current install:
+
+```bash
+aac integration openclaw
+aac integration claude-code
+aac integration json --client claude-code --wrapped
+```
+
+Add `--apply` to register directly when the client CLI is installed locally:
+
+```bash
+aac integration openclaw --apply
+aac integration claude-code --scope user --apply
+```
+
+### OpenClaw Integration
+
+For OpenClaw, the recommended path is:
+
+```bash
+aac integration openclaw
+```
+
+If you want the raw JSON instead of a ready-to-run command, use `aac integration json --client openclaw`. See [docs/openclaw.md](docs/openclaw.md) for the full setup and troubleshooting notes.
+
+### Claude Code Integration
+
+For Claude Code, generate the add command or a `.mcp.json` snippet:
+
+```bash
+aac integration claude-code
+aac integration json --client claude-code --wrapped
+```
+
+Use `--scope user` if you want a user-level Claude Code registration instead of the default project-level one.
+
 ## Security
 
 - **Workspace isolation**: Outbound directories (configurable, multiple) restrict what content can be sent. Inbound directory restricts where received messages are written.

@@ -1,0 +1,5 @@
+{
+  "command": "node",
+  "args": ["dist/cli/index.js", "mcp"],
+  "cwd": "/absolute/path/to/async-agent-channel"
+}

@@ -10,6 +10,7 @@ import { registerListenCommand } from "./listen.js";
 import { registerMcpCommand } from "./mcp.js";
 import { registerServerCommand } from "./server.js";
 import { registerUpdateCommand } from "./update.js";
+import { registerIntegrationCommand } from "./integration.js";
 
 const program = new Command();
 
@@ -27,5 +28,6 @@ registerListenCommand(program);
 registerMcpCommand(program);
 registerServerCommand(program);
 registerUpdateCommand(program);
+registerIntegrationCommand(program);
 
 program.parse();

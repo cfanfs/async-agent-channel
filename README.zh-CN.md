@@ -106,6 +106,44 @@ aac mcp                # 启动 stdio MCP server
 
 在 agent 的 MCP 配置中接入后，可直接使用 `send`、`fetch`、`inbox_list`、`inbox_read`、`inbox_ack`、`outbound_list`、`outbound_read` 等工具。MCP server 启动时自动维持 IMAP IDLE 连接。
 
+### MCP Client 辅助命令
+
+可以直接用内置辅助命令，按当前安装方式生成对应客户端的注册命令：
+
+```bash
+aac integration openclaw
+aac integration claude-code
+aac integration json --client claude-code --wrapped
+```
+
+如果本机已经装了对应 CLI，也可以直接执行注册：
+
+```bash
+aac integration openclaw --apply
+aac integration claude-code --scope user --apply
+```
+
+### OpenClaw 集成
+
+OpenClaw 推荐直接使用：
+
+```bash
+aac integration openclaw
+```
+
+如果你想拿到底层 JSON，而不是直接拿现成命令，可以执行 `aac integration json --client openclaw`。完整说明见 [docs/openclaw.zh-CN.md](docs/openclaw.zh-CN.md)。
+
+### Claude Code 集成
+
+Claude Code 可直接生成注册命令，或生成 `.mcp.json` 片段：
+
+```bash
+aac integration claude-code
+aac integration json --client claude-code --wrapped
+```
+
+如果你想注册到用户级配置，而不是默认的项目级配置，请加 `--scope user`。
+
 ## 安全
 
 - **工作区隔离**：outbound 目录（可配多个）限制可发送内容；inbound 目录限制消息写入位置。
